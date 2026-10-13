@@ -30,6 +30,8 @@ Models are **auto-downloaded on first use** (HuggingFace CDN → local cache) wi
 const jev = await createJev({ model: "kev-4b" });
 ```
 
+Need a domain-specific decision model? See **[Training your own JEV models](docs/TRAINING.md)** — fine-tune kev or open-jev, export to ONNX, and load it right here.
+
 ## Configuration
 
 ```typescript
