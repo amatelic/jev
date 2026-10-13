@@ -1,0 +1,38 @@
+services:
+  jev:
+    build:
+      context: .
+      args:
+        JEV_MODEL: ${JEV_MODEL:-kev-0.6b}
+    ports:
+      - "9401:9401"
+    environment:
+      - JEV_MODEL=${JEV_MODEL:-kev-0.6b}
+      - JEV_DTYPE=${JEV_DTYPE:-q4}
+    volumes:
+      - jev-model-cache:/root/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:9401/decide', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({state:'health',questions:[{id:'h',kind:'noul',prompt:'healthy'}]})}).then(r => r.ok).catch(() => false)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Larger model variant (run separately: docker compose --profile big up)
+  jev-4b:
+    profiles: ["big", "kev-4b"]
+    build:
+      context: .
+      args:
+        JEV_MODEL: kev-4b
+    ports:
+      - "9402:9401"
+    environment:
+      - JEV_MODEL=kev-4b
+      - JEV_DTYPE=q4
+    volumes:
+      - jev-model-cache:/root/.cache
+    restart: unless-stopped
+
+volumes:
+  jev-model-cache:

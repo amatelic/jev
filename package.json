@@ -1,0 +1,63 @@
+{
+  "name": "@amatelic/jev",
+  "version": "0.1.0",
+  "description": "One-line local AI decisions. Calibrated choice/noul/score from open models (kev-0.6b, kev-4b). No API keys, no cloud. Auto-downloads models. Native ARM64/Linux or Docker fallback.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "serve": "node dist/server.js"
+  },
+  "keywords": [
+    "jev",
+    "decision-model",
+    "local-ai",
+    "onnx",
+    "kev",
+    "qwen3",
+    "classification",
+    "calibrated",
+    "no-cloud",
+    "offline-ai"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.13"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": ">=4.3.0",
+    "open-jev": ">=0.1.2"
+  },
+  "peerDependenciesMeta": {
+    "open-jev": {
+      "optional": true
+    },
+    "@huggingface/transformers": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "^4.3.0",
+    "@types/node": "^22.0.0",
+    "open-jev": "^0.1.2",
+    "typescript": "^5.6.3",
+    "vitest": "^4.0.17"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://github.com/amatelic/jev.git"
+  }
+}
