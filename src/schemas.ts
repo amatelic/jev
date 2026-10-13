@@ -20,11 +20,14 @@ export const ChoiceQuestionSchema = Type.Object({
   ),
 });
 
-export const NoulQuestionSchema = Type.Object({
-  id: Type.String({ minLength: 1, maxLength: 64 }),
-  kind: Type.Literal("noul"),
-  prompt: Type.String({ minLength: 1, maxLength: 4000 }),
-});
+export const NoulQuestionSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 64 }),
+    kind: Type.Literal("noul"),
+    prompt: Type.String({ minLength: 1, maxLength: 4000 }),
+  },
+  { additionalProperties: false },
+);
 
 export const ScoreQuestionSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 64 }),
