@@ -3,19 +3,24 @@
 First full pass of the [TRAINING.md](TRAINING.md) optimization loop, run locally
 on an M1 Max (32 GB) — no cloud, no Modal.
 
-## Results (50-event official gate + 250-record holdout, CPU q4)
+## Results (50-event official gate + 250-record holdout, CPU q4, this machine)
 
 | Model | Gate (50) | Holdout (250) | Avg latency | Notes |
 |---|---|---|---|---|
-| kev-0.6b (baseline) | 88.0% | 88.0% | 218–241 ms | shipped default |
-| kev-4b (baseline) | 94%* | — | ~1051 ms* | *from TRAINING.md; local run pending |
-| open-jev (baseline) | 84%* | — | ~136 ms* | *from TRAINING.md; local run pending |
+| open-jev (baseline) | 84.0% | — | 127 ms | verified locally |
+| kev-0.6b (baseline) | 88.0% | 88.0% | 218–241 ms | verified locally |
+| kev-4b (baseline) | 94.0% | — | 927 ms | verified locally (491 s one-time session init) |
 | **events-v1 (this run)** | **100%** | **96.4%** | **170–240 ms** | kev-0.6b + LoRA delta |
+
+Beats the shipped family's accuracy ceiling (kev-4b's 94%) at kev-0.6b's
+latency — TRAINING.md §8's ">94% @ <1051 ms" prize.
 
 - Outdoor F1 on holdout: 57 → **96** (the baseline's worst category — the
   fine-tune lifts the weak categories, not just the mean, per §8's checklist).
 - Gate calibration: all 50 predictions in the >95% bin, actual 100%, gap **0pp**.
 - Latency parity: same generation cost class as kev-0.6b.
+- bench.mjs note: 7/10 — bench uses a different taxonomy (workshop/general/market
+  options the fine-tune never saw) plus its known 9/10 ceiling (§8); not a regression.
 
 ## Recipe (all artifacts in this repo)
 
@@ -82,8 +87,6 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate 
 
 ## Next steps
 
-- kev-4b local baseline run (model cached; first-load session init is slow on
-  32 GB) to complete the comparison table.
 - Ship `events-v1` to a HF repo + add as a first-class alias in `src/index.ts`
   (§7: MODEL_REPOS, MODEL_SIZES, ModelAliasSchema).
 - q4f16 (WebGPU): blocked on a Cast type-inference failure in
