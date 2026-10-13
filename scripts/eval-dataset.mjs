@@ -36,7 +36,7 @@ function loadJsonl(path) {
 function loadGate() {
   // Parse the official 50-event set out of eval.mjs (single source of truth).
   const src = readFileSync(new URL("../eval.mjs", import.meta.url), "utf8");
-  const texts = [...src.matchAll(/\{ text: "([^"]+)", cat: "(\w+)", sub: "(\w+)" \}/g)].map((m) => ({
+  const texts = [...src.matchAll(/\{ text: "([^"]+)", cat: "(\w+)", sub: "([\w-]+)" \}/g)].map((m) => ({
     text: m[1], cat: m[2], sub: m[3],
   }));
   if (texts.length !== 50) {

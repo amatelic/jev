@@ -43,14 +43,24 @@ def quantize_q4(src: Path, dst: Path, block_size=32):
 
 def quantize_q4f16(q4_src: Path, dst: Path):
     # int4 already applied to the MatMuls; convert the remaining fp32 ops to fp16.
+    # The mixed int4/fp16 graph can trip type-inference on Cast chains — retry with
+    # shape inference disabled, and ultimately skip (q4 is the CPU eval path).
+    import onnx
+
     model = onnx.load(str(q4_src))
-    fp16_model = float16.convert_float_to_float16(
-        model, keep_io_types=True,
-        node_block_list=None,
-    )
-    onnx.save(fp16_model, str(dst))
-    size = dst.stat().st_size
-    print(f"wrote {dst} ({size / 1e6:.0f} MB)")
+    try:
+        fp16_model = float16.convert_float_to_float16(model, keep_io_types=True)
+        onnx.save(fp16_model, str(dst))
+    except Exception as e:
+        try:
+            fp16_model = float16.convert_float_to_float16(model, keep_io_types=True, disable_shape_infer=True)
+            onnx.save(fp16_model, str(dst))
+        except Exception as e2:
+            dst.unlink(missing_ok=True)
+            print(f"q4f16 skipped ({e2.__class__.__name__}: {str(e2)[:120]}) — q4 remains the shipped dtype")
+            return False
+    print(f"wrote {dst} ({dst.stat().st_size / 1e6:.0f} MB)")
+    return True
 
 
 def verify(path: Path):
@@ -88,8 +98,12 @@ def main():
     verify(q4)
 
     q4f16 = d / "model_q4f16.onnx"
-    quantize_q4f16(q4, q4f16)
-    verify(q4f16)
+    if quantize_q4f16(q4, q4f16):
+        try:
+            verify(q4f16)
+        except Exception as e:
+            q4f16.unlink(missing_ok=True)
+            print(f"q4f16 failed ORT verification ({str(e)[:120]}) — removed; q4 remains")
 
     print("done — next: craft config.json + tokenizer files (scripts/package-kev-model.mjs)")
 

@@ -112,6 +112,19 @@ function mapNativeAnswer(raw: Record<string, unknown>, question: Question): Answ
 
 // ─── HTTP transport (Docker / remote) ──────────────────────────────
 
+// Map a JEV-schema question to open-jev's runtime shape (what choice()/noul()/score()
+// produce). The HTTP server path (server.ts buildQuestion) does exactly this; the
+// native path must match it or open-jev rejects "kind"/"prompt" questions.
+function buildNativeQuestion(q: Question): Record<string, unknown> {
+  if (q.kind === "choice") {
+    return { type: "choice", instructions: q.prompt, options: q.options, descriptions: q.descriptions };
+  }
+  if (q.kind === "noul") {
+    return { type: "noul", instructions: q.prompt };
+  }
+  return { type: "score", instructions: q.prompt, options: q.levels };
+}
+
 async function httpDecide(
   url: string,
   state: string,
@@ -172,7 +185,10 @@ export async function createJev(options: CreateJevOptions = {}): Promise<JevClie
     }
 
     if (transport === "native" && nativeRuntime) {
-      const rawAnswers = await nativeRuntime.decide(state, [...questions]);
+      const rawAnswers = await nativeRuntime.decide(
+        state,
+        questions.map(buildNativeQuestion),
+      );
 
       return questions.map((q, i) =>
         mapNativeAnswer((rawAnswers[i] ?? {}) as Record<string, unknown>, q),

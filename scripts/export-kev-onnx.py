@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 
 from kev.checkpoint import Checkpoint
+from kev.data import load_records, materialize
 from kev.model import SPECIAL, DecisionModel, encode  # noqa: E402
 
 
@@ -52,20 +53,24 @@ class KevExport(nn.Module):
         causal = torch.tril(torch.ones(S, S, dtype=torch.bool, device=input_ids.device))
         same = (seg.unsqueeze(1) == seg.unsqueeze(2)) | (seg.unsqueeze(1) == 0)
         valid_key = attention_mask.unsqueeze(1).to(torch.bool)
-        allow = causal.unsqueeze(0) & same & valid_key
-        allow = allow | torch.eye(S, dtype=torch.bool, device=input_ids.device).unsqueeze(0)
+        allow = causal.unsqueeze(0) & same & valid_key  # tril already contains the diagonal (j == i);
+        # EyeLike (for padded query rows) is not implemented in onnxruntime — and the JS
+        # runtime always sends unpadded single sequences, so it is unnecessary here.
         mask = torch.zeros(B, S, S, dtype=torch.float32, device=input_ids.device)
         mask = mask.masked_fill(~allow, torch.finfo(torch.float32).min).unsqueeze(1)
 
         pos = torch.arange(S, device=input_ids.device).unsqueeze(0).expand(B, S)
         h = self.lm(input_ids=input_ids, position_ids=pos, attention_mask=mask).last_hidden_state
 
-        # decide position for each token: the first <|fim_suffix|> at index >= i
-        # (every </opt> precedes its branch's <decide>, which ends the branch)
-        idx = torch.arange(S, device=input_ids.device).unsqueeze(0).expand(B, S)
-        is_decide = input_ids == self.decide_id
-        masked = torch.where(is_decide, idx, torch.full_like(idx, S - 1))
-        suffix = torch.flip(torch.cummin(torch.flip(masked, dims=[1]), dim=1)[0], dims=[1])
+        # decide position for each token: the first <|fim_suffix|> at index >= i.
+        # cummin is not ONNX-exportable at opset 17 — argmax formulation instead:
+        # earliest decide maximizes (S-1-j); j < i gets a -1e9 penalty (upper-triangular allow).
+        idx_f = torch.arange(S, device=input_ids.device, dtype=torch.float32)
+        is_decide_f = (input_ids == self.decide_id).to(torch.float32)  # [B,S]
+        base = torch.where(is_decide_f > 0.5, (S - 1) - idx_f, torch.full_like(idx_f, -1.0).unsqueeze(0))
+        ge_i = torch.triu(torch.ones(S, S, device=input_ids.device))  # [i,j] = 1 iff j >= i
+        total = base.unsqueeze(1) - (1.0 - ge_i) * 1e9  # [B,S,S]
+        suffix = torch.argmax(total, dim=2).to(torch.int64)  # [B,S]
 
         # pointer readout: k(h_i) · q(h_decide(i)) * scale, read at </opt> positions
         qd = self.head_q(h)
@@ -116,6 +121,33 @@ def export_onnx(wrap, out_dir: Path, seq_len=256):
         )
     print(f"exported {path} ({path.stat().st_size / 1e6:.0f} MB)")
 
+    # torch writes one loose file per external tensor; consolidate into the
+    # single model.onnx + model.onnx_data layout transformers.js/HF expect.
+    consolidate_external_data(out_dir, path)
+
+
+def consolidate_external_data(out_dir: Path, path: Path):
+    import onnx
+
+    loose = [p for p in out_dir.iterdir() if p.is_file() and p.name not in (
+        "model.onnx", "model.onnx_data", "config.json") and not p.name.startswith((
+        "tokenizer", "vocab", "merges", "special", "added"))]
+    if not loose:
+        return
+    print(f"consolidating {len(loose)} external tensor files...")
+    model = onnx.load(str(path), load_external_data=True)  # tensors into memory first
+    for p in loose:
+        p.unlink()
+    onnx.save_model(
+        model, str(path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location="model.onnx_data",
+        size_threshold=0,
+    )
+    print(f"  → model.onnx ({path.stat().st_size / 1e6:.1f} MB) + model.onnx_data "
+          f"({(out_dir / 'model.onnx_data').stat().st_size / 1e6:.0f} MB)")
+
 
 def parity_check(tok, wrap, reference: DecisionModel, records, n=8, tol=2e-3):
     """Same records through the torch scoring path and the exported wrapper."""
@@ -123,22 +155,17 @@ def parity_check(tok, wrap, reference: DecisionModel, records, n=8, tol=2e-3):
 
     print(f"parity check on {min(n, len(records))} records...")
     worst = 0.0
-    for rec in records[:n]:
+    for raw in records[:n]:
+        rec = materialize(raw)  # raw JSONL (questions dict) -> internal record (instr/options/labels)
         enc = encode(tok, rec)
         ids = torch.tensor([enc["ids"]], dtype=torch.int64)
         att = torch.ones_like(ids)
         with torch.no_grad():
             got = wrap(ids, att)[0].tolist()
-            # reference: DecisionModel forward + head readout at T=1
-            ref_model = reference
-            ref_model.head.temperature = 1.0
-            z = ref_model.probs(enc)  # not logits; recompute logits directly:
-        h = ref_model.hidden(enc)
-        read = ref_model._readout(h, enc)
-        flat_ref = {}
-        for qi, (z_q) in enumerate(read):
-            for oi, val in enumerate(z_q.tolist()):
-                flat_ref[enc["opt_idx"][qi][oi]] = val
+            reference.head.temperature = 1.0
+            h = reference.hidden(enc)
+            read = reference._readout(h, enc)
+            flat_ref = {pos: val for qi, z_q in enumerate(read) for pos, val in zip(enc["opt_idx"][qi], z_q.tolist())}
         for pos, ref_val in flat_ref.items():
             diff = abs(got[pos] - ref_val)
             worst = max(worst, diff)
