@@ -59,5 +59,8 @@
   "repository": {
     "type": "git",
     "url": "git+ssh://github.com/amatelic/jev.git"
+  },
+  "allowScripts": {
+    "onnxruntime-node@1.30.0": true
   }
 }

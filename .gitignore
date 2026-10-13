@@ -1,3 +1,8 @@
 node_modules
 dist
 *.tsbuildinfo
+vendor/
+models/
+*.onnx
+*.onnx_data
+nohup.out
