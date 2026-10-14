@@ -30,7 +30,7 @@ Models are **auto-downloaded on first use** (HuggingFace CDN → local cache) wi
 const jev = await createJev({ model: "kev-4b" });
 ```
 
-Need a domain-specific decision model? See **[Training your own JEV models](docs/TRAINING.md)** — fine-tune kev or open-jev, export to ONNX, and load it right here.
+Need a domain-specific decision model? See **[Training your own JEV models](docs/TRAINING.md)** — fine-tune kev or open-jev, export to ONNX, and load it right here. For the worked, verified end-to-end pipeline (data → LoRA → ONNX q4 → eval, 88% → 100% on the event-classification gate), see **[docs/TRAINING-PIPELINE.md](docs/TRAINING-PIPELINE.md)**.
 
 ## Configuration
 
