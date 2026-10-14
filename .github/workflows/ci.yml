@@ -1,0 +1,80 @@
+# CI for @amatelic/jev — typecheck, build, tests (with HF model cache), pipeline dry-run.
+# Node 22 on ubuntu-latest. No schedules: every run is push/PR/dispatch-triggered only.
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # package.json carries an "allowScripts" map approving the onnxruntime-node
+      # postinstall script — required for native (ONNX) inference in tests.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (tsc emit)
+        run: npm run build
+
+      # Cache the HuggingFace hub cache (~/.cache/huggingface) keyed on the lockfile.
+      # Correctness note: the model-dependent tests in src/index.test.ts self-skip
+      # when the model cannot load (beforeAll try/catch), so on a cold cache this
+      # step degrades to schema-only tests instead of failing CI. With a warm cache
+      # the full 38-test suite runs against real ONNX models, fully offline.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            huggingface-${{ runner.os }}-
+
+      - name: Run tests
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: npx vitest run
+
+      # Pipeline dry-run smoke: must exit 0 without executing heavy stages.
+      - name: Pipeline dry-run smoke
+        run: node scripts/pipeline.mjs --dry-run
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MANUAL GATE EVAL (documented template — intentionally NOT an active job)
+# ─────────────────────────────────────────────────────────────────────────────
+# The official gate eval can be run in CI on demand. It is kept commented out
+# because it downloads the kev-0.6b model from HuggingFace on a cold cache
+# (~800 MB download) — a slow, bandwidth-heavy step that does not belong in
+# the default validate path. To use: uncomment, unindent, and dispatch manually.
+#
+#  gate-eval:
+#    runs-on: ubuntu-latest
+#    # 'on' is defined at workflow level; this job only runs via workflow_dispatch.
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/setup-node@v4
+#        with:
+#          node-version: 22
+#          cache: npm
+#      - run: npm ci
+#      # HF_HUB_OFFLINE is deliberately UNSET here so eval downloads the model.
+#      # Expected output line: RESULT<TAB>kev-0.6b<TAB>gate<TAB>acc=88.0<TAB>avg_ms=N
+#      - name: Official gate eval (kev-0.6b)
+#        run: node scripts/eval-dataset.mjs kev-0.6b --gate
+#
+# Tradeoff: ~800 MB one-time download per cold runner (use actions/cache on
+# ~/.cache/huggingface, same key scheme as above, if this becomes frequent).
+# ─────────────────────────────────────────────────────────────────────────────

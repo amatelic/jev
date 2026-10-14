@@ -6,3 +6,4 @@ models/
 *.onnx
 *.onnx_data
 nohup.out
+data/eval-history.log

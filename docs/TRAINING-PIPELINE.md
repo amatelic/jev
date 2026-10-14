@@ -153,14 +153,18 @@ uv run python ../../scripts/quantize-kev-onnx.py ../../models/events-v1
 ### Stage 5 — package
 
 ```bash
-mkdir -p models/events-v1/onnx && mv models/events-v1/model*.onnx* models/events-v1/onnx/
 node scripts/package-kev-model.mjs events-v1
+mkdir -p models/events-v1/onnx && mv models/events-v1/model*.onnx* models/events-v1/onnx/
 ```
 
 Copies the full tokenizer set from the cached base snapshot and writes
 `config.json` with a proper `kev` section (delimiters, `trained_max_*`,
 `transformers.js_config.dtype`). Local-path loading
 (`OpenJev.load({ model: "/abs/path" })`) is verified working.
+
+Note: the `mv` into `onnx/` must come **after** packaging —
+`package-kev-model.mjs` reads `models/<name>/model_q4.onnx` at the top level
+(as written by stage 4) and exits with an error if it was already moved.
 
 ### Stage 6 — evaluate through the real runtime
 
@@ -205,8 +209,8 @@ uv run python -m kev.train --data ../../data/kev-train.jsonl \
 uv run python ../../scripts/export-kev-onnx.py runs/events-v1 ../../models/events-v1
 uv run python ../../scripts/quantize-kev-onnx.py ../../models/events-v1
 cd ..
-mkdir -p models/events-v1/onnx && mv models/events-v1/model*.onnx* models/events-v1/onnx/
 node scripts/package-kev-model.mjs events-v1
+mkdir -p models/events-v1/onnx && mv models/events-v1/model*.onnx* models/events-v1/onnx/
 
 HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 ```
@@ -221,6 +225,31 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 | q4f16 ORT type error on `Cast` | known onnxconverter-common issue with mixed int4/fp16 graphs; q4 is the CPU path — safe to skip |
 | Accuracy fine but confidences wrong | refit temperature on validation, re-export with `--temperature T` |
 | Bench (`bench.mjs`) score looks low | bench uses a different taxonomy (workshop/general/market) with a 9/10 ceiling by construction — judge on `eval-dataset.mjs` instead |
+
+## Automation
+
+### npm scripts
+
+- `npm run pipeline` — one command for the full pipeline: `data` (stage 1) → `train` → `export` → `quantize` (stages 2–4, run inside the vendored `vendor/kev` uv env) → `package` (stage 5) → `eval` (stage 6), plus an optional default-off `fetch` stage. Useful flags: `--name <model>` (default `events-v1`), `--only a,b` / `--skip a,b` / `--from <stage>` for partial runs, `--yes` for non-interactive. A preflight check verifies every precondition (e.g. `vendor/kev` and its `.venv` for stages 2–4 — gitignored, so clone it first) and fails fast with a clear message instead of half-running. A full run includes the ~13-minute train stage; `--skip train` / `--from export` reuse an existing `vendor/kev/runs/<name>`.
+- `npm run pipeline:dry` — prints the same stage plan (commands and prerequisite checks) without executing anything; use it to validate inputs before a real run.
+- `npm run eval:gate` — runs the official 50-event gate via `scripts/eval-gate.mjs` against `models/<name>` (default `events-v1`, override via arg or `JEV_MODEL` env) when it is packaged, falling back to the cached `kev-0.6b` baseline otherwise. It re-execs through the ARM64 node and sets `HF_HUB_OFFLINE=1` so nothing is downloaded.
+
+### scripts/drift-eval.sh — periodic regression check
+
+```bash
+bash scripts/drift-eval.sh
+```
+
+- Prepends the ARM64 node dir to `PATH` (the default shell node is x64 under Rosetta), forces `HF_HUB_OFFLINE=1`, and runs the gate for `kev-0.6b` and — when `models/events-v1/onnx` exists — the fine-tuned model. Takes ~2–3 min.
+- Each run appends the eval `RESULT` line to `data/eval-history.log`, prefixed with an ISO 8601 UTC timestamp, so drift is visible over time. The history file is gitignored — it is machine-local.
+- Thresholds, derived from the verified baselines above (kev-0.6b gate 88.0, events-v1 gate 100.0): exit 1 if kev-0.6b gate < 84.0 or events-v1 gate < 95.0. One `PASS`/`FAIL` line is printed per model.
+- Run it after dependency or node/ORT version changes, and before cutting a release.
+
+### CI (.github/workflows/ci.yml)
+
+- On push (main), PRs, and manual dispatch: `npm ci` (onnxruntime-node postinstall is pre-approved via the `allowScripts` entry), typecheck, build, the vitest suite with `HF_HUB_OFFLINE=1`, and a `pipeline --dry-run` smoke check.
+- CI never downloads models: `~/.cache/huggingface` is restored from the GitHub Actions cache (keyed on the lockfile hash) before the test step. When the cache is cold, the model-dependent tests self-skip via their `beforeAll` load guard instead of failing or fetching — only cache-backed runs exercise real ONNX models; schema-only tests always run.
+- The gate eval in CI is a commented-out manual template at the bottom of the workflow file: it deliberately leaves `HF_HUB_OFFLINE` unset (downloads kev-0.6b, ~800 MB on a cold runner), so it is opt-in only.
 
 ## Repo hygiene notes
 
