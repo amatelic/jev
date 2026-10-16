@@ -7,3 +7,4 @@ models/
 *.onnx_data
 nohup.out
 data/eval-history.log
+runs/

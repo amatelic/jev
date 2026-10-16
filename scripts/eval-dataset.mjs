@@ -14,9 +14,9 @@
  *   node scripts/eval-dataset.mjs --list                # available datasets/models
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { OpenJev, choice } from "open-jev";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { CATEGORIES, CATEGORY_DESCRIPTIONS } from "./shared/question.mjs";
+import { reexecIfWrongArch } from "./shared/arm64.mjs";
 
 const MODEL = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "kev-0.6b";
 const GATE = process.argv.includes("--gate");
@@ -105,17 +105,39 @@ function report(results, label) {
   return { accuracy: Number(accuracy), correct, total: results.length, perCat, bins };
 }
 
+// A model arg that is an existing local directory is fully on disk — nothing
+// to fetch — so eval can default to offline mode when HF_HUB_OFFLINE is unset
+// (HF connectivity is flaky). Remote ids/paths stay untouched so first-time
+// downloads still work when online.
+function defaultOfflineForLocalModel(model) {
+  if (process.env.HF_HUB_OFFLINE !== undefined) return;
+  try {
+    if (statSync(model).isDirectory()) process.env.HF_HUB_OFFLINE = "1";
+  } catch {
+    // not a local path — leave the environment alone
+  }
+}
+
 // ─── Main ───────────────────────────────────────────────────────────
 
 async function main() {
+  reexecIfWrongArch();
+
   if (process.argv.includes("--list")) {
     console.log("models: kev-0.6b, kev-4b, open-jev, <hf-id>, <local-path>");
     console.log("datasets: --gate (official 50), holdout (250), train (1000)");
     return;
   }
 
+  defaultOfflineForLocalModel(MODEL);
+
   const records = GATE ? loadGate() : loadJsonl(`data/${SPLIT ?? "holdout"}.jsonl`);
   const datasetLabel = GATE ? "official-gate (50 events)" : `${SPLIT ?? "holdout"} (${records.length} records)`;
+
+  // open-jev → @huggingface/transformers → sharp loads arch-specific native
+  // bindings at import time, so it must be imported only AFTER the arm64
+  // re-exec above (under x64-under-Rosetta the import itself throws).
+  const { OpenJev, choice } = await import("open-jev");
 
   console.log(`Evaluating ${MODEL} on ${datasetLabel}`);
   const tLoad = performance.now();

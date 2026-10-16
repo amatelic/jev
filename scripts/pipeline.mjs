@@ -9,15 +9,31 @@
  *   node scripts/pipeline.mjs --dry-run                # print plan, execute nothing
  *   node scripts/pipeline.mjs --only data --yes        # regenerate datasets (~1s)
  *   node scripts/pipeline.mjs --from export --yes      # reuse vendor/kev/runs/<name>
- *   node scripts/pipeline.mjs --name events-v1         # full pipeline (~15 min)
+ *   node scripts/pipeline.mjs --name events-v1           # full pipeline (~15 min)
+ *   node scripts/pipeline.mjs --name events-v1 --detach # fire-and-forget (implies --yes)
+ *   node scripts/pipeline.mjs status                    # table of detached runs
  *
  * Flags:
  *   --name <model>   run/model dir name (default events-v1)
  *   --only a,b,c     run exactly these stages (pipeline order preserved)
  *   --skip a,b       remove stages from the plan
  *   --from <stage>   start at <stage> (e.g. --from export reuses runs/<name>)
- *   --dry-run        print the exact commands, exit 0
+ *   --dry-run        print the exact commands, exit 0 (overrides --detach)
  *   --yes            non-interactive (skip the y/N prompt)
+ *   --detach         spawn the arm64-resolved node as a detached child running
+ *                    this same pipeline (implies --yes — a detached child has
+ *                    no TTY to answer the y/N prompt). Output appends to
+ *                    runs/<name>/pipeline.log; the parent writes
+ *                    runs/<name>/job.json {name,pid,startedAt,args} and exits 0;
+ *                    the child writes runs/<name>/job.status {code,finishedAt,
+ *                    results} on every exit path (finish/SIGINT/fatal error).
+ *                    Re-detaching the same name is allowed: job.json is
+ *                    overwritten, the log is appended, and any stale job.status
+ *                    is deleted first (else `status` would lie about the new run).
+ *   status           subcommand (not a stage; parsed before flag parsing):
+ *                    table of runs/* from job.json + job.status — state
+ *                    (running/done/failed/crashed), elapsed or exit code, log
+ *                    path; always exits 0 (it is a read).
  *
  * Notes:
  * - train/export/quantize run via the vendored kev uv env with cwd=vendor/kev.
@@ -28,14 +44,20 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline/promises";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const RUNS_DIR = join(ROOT, "runs"); // repo-root runs/ (throwaway, gitignored) — NOT vendor/kev/runs
 const ARM64_NVM_NODE = join(homedir(), ".nvm/versions/node/v24.21.0-arm64/bin/node");
+
+// State for detached children (PIPELINE_DETACHED=1 is set by the --detach parent).
+const DETACHED = process.env.PIPELINE_DETACHED === "1";
+let detachedName = null; // set in main() so every exit path can record job.status
+let interrupted = false; // set by SIGINT so finish() reports 130 in job.status
 
 // Verified reference numbers (docs/TRAINING-PIPELINE.md, EVENTS-V1.md).
 const BASELINES = [
@@ -139,12 +161,13 @@ const STAGE_NAMES = STAGES.map((s) => s.name);
 // ─── CLI ─────────────────────────────────────────────────────────────
 
 const USAGE = `usage: node scripts/pipeline.mjs [--name <model>] [--only a,b,c] [--skip a,b]
-                 [--from <stage>] [--dry-run] [--yes]
+                 [--from <stage>] [--dry-run] [--yes] [--detach]
+       node scripts/pipeline.mjs status
 
 stages: ${STAGE_NAMES.join(", ")}   (fetch is optional and default-off)`;
 
 function parseArgs(argv) {
-  const opts = { name: "events-v1", only: null, skip: [], from: null, dryRun: false, yes: false };
+  const opts = { name: "events-v1", only: null, skip: [], from: null, dryRun: false, yes: false, detach: false };
   const value = (flag, v) => {
     if (v === undefined || v === "") {
       console.error(`error: ${flag} requires a value\n${USAGE}`);
@@ -161,6 +184,7 @@ function parseArgs(argv) {
     else if (flag === "--skip") opts.skip = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--from") opts.from = next();
     else if (flag === "--dry-run") opts.dryRun = true;
+    else if (flag === "--detach") opts.detach = true;
     else if (flag === "--yes" || flag === "-y") opts.yes = true;
     else if (flag === "--help" || flag === "-h") { console.log(USAGE); process.exit(0); }
     else {
@@ -180,6 +204,68 @@ function parseArgs(argv) {
   assertStages(opts.skip, "--skip");
   if (opts.from) assertStages([opts.from], "--from");
   return opts;
+}
+
+// ─── status subcommand ───────────────────────────────────────────────
+
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null; // missing, empty, or corrupt
+  }
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM"; // EPERM = exists, owned by someone else
+  }
+}
+
+function statusCommand() {
+  const jobs = [];
+  if (existsSync(RUNS_DIR)) {
+    for (const entry of readdirSync(RUNS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const job = readJson(join(RUNS_DIR, entry.name, "job.json"));
+      if (!job) continue;
+      jobs.push({ name: job.name ?? entry.name, job, dir: join(RUNS_DIR, entry.name) });
+    }
+  }
+  jobs.sort((a, b) => String(a.job.startedAt ?? "").localeCompare(String(b.job.startedAt ?? "")));
+
+  const counts = { running: 0, done: 0, failed: 0, crashed: 0 };
+  const rows = jobs.map(({ name, job, dir }) => {
+    const status = readJson(join(dir, "job.status"));
+    let state, detail;
+    if (status && Number.isInteger(status.code)) {
+      state = status.code === 0 ? "done" : "failed";
+      detail = `exit ${status.code}`;
+    } else if (Number.isInteger(job.pid) && pidAlive(job.pid)) {
+      state = "running";
+      const started = Date.parse(job.startedAt ?? "");
+      detail = Number.isNaN(started) ? "elapsed ?" : `elapsed ${fmtDur(Date.now() - started)}`;
+    } else {
+      state = "crashed";
+      detail = Number.isInteger(job.pid) ? `pid ${job.pid} dead, no job.status` : "invalid pid, no job.status";
+    }
+    counts[state]++;
+    return [name, state, detail, `${relative(ROOT, dir)}/pipeline.log`];
+  });
+
+  if (!rows.length) {
+    console.log(`no detached runs found (${relative(ROOT, RUNS_DIR)}/*/job.json)`);
+  } else {
+    const widths = [0, 1, 2].map((i) => Math.max(...rows.map((r) => r[i].length)) + 2);
+    console.log(`${"name".padEnd(widths[0])}${"state".padEnd(widths[1])}${"detail".padEnd(widths[2])}log`);
+    for (const r of rows) console.log(r[0].padEnd(widths[0]) + r[1].padEnd(widths[1]) + r[2].padEnd(widths[2]) + r[3]);
+  }
+  const crashed = counts.crashed ? `, ${counts.crashed} crashed` : "";
+  console.log(`${counts.running} running, ${counts.done} done, ${counts.failed} failed${crashed}`);
+  process.exit(0); // status is a read — always exit 0
 }
 
 // ─── Plan + preflight ────────────────────────────────────────────────
@@ -229,6 +315,54 @@ let liveChild = null;
 function resolveArm64Node() {
   if (process.arch === "arm64") return process.execPath;
   return existsSync(ARM64_NVM_NODE) ? ARM64_NVM_NODE : null;
+}
+
+// ─── Detached execution (--detach parent / PIPELINE_DETACHED=1 child) ─
+
+function detachSpawn(opts, argv) {
+  const nodeBin = resolveArm64Node() ?? process.execPath;
+  const runDir = join(RUNS_DIR, opts.name);
+  mkdirSync(runDir, { recursive: true });
+  // a stale job.status from a previous run would make `status` lie about this one
+  const statusPath = join(runDir, "job.status");
+  if (existsSync(statusPath)) rmSync(statusPath);
+  const logPath = join(runDir, "pipeline.log");
+  const out = openSync(logPath, "a");
+  const err = openSync(logPath, "a");
+  const childArgs = argv.filter((a) => a !== "--detach");
+  if (!childArgs.includes("--yes") && !childArgs.includes("-y")) childArgs.push("--yes"); // --detach implies --yes
+  const child = spawn(nodeBin, [fileURLToPath(import.meta.url), ...childArgs], {
+    cwd: ROOT,
+    env: { ...process.env, PIPELINE_DETACHED: "1" },
+    detached: true,
+    stdio: ["ignore", out, err],
+  });
+  child.unref();
+  try {
+    writeFileSync(
+      join(runDir, "job.json"),
+      JSON.stringify({ name: opts.name, pid: child.pid, startedAt: new Date().toISOString(), args: childArgs }, null, 2) + "\n",
+    );
+  } catch (err2) {
+    console.error(`error: cannot write ${relative(ROOT, runDir)}/job.json — ${err2.message}`);
+    try {
+      child.kill("SIGKILL"); // don't leave an untracked orphan running
+    } catch { /* already gone */ }
+    process.exit(1);
+  }
+  console.log(`detached: ${opts.name} — pid ${child.pid} — log ${relative(ROOT, logPath)} — check: node scripts/pipeline.mjs status`);
+  process.exit(0);
+}
+
+function writeJobStatus(code, results) {
+  if (!DETACHED || !detachedName) return;
+  try {
+    const runDir = join(RUNS_DIR, detachedName);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "job.status"), JSON.stringify({ code, finishedAt: new Date().toISOString(), results }, null, 2) + "\n");
+  } catch (err) {
+    console.error(`warning: could not write job.status — ${err?.message ?? err}`);
+  }
 }
 
 function cmdLine(step, ctx) {
@@ -329,6 +463,7 @@ function finish(timings, results, ctx, code) {
     for (const [name, ms] of timings) console.log(`  ${pad(name, 10)} ${fmtDur(ms)}`);
   }
   printSummary(results, ctx);
+  writeJobStatus(interrupted ? 130 : code, results);
   process.exit(code);
 }
 
@@ -357,7 +492,20 @@ function printPlan(plan, ctx, opts, issues) {
 // ─── Main ────────────────────────────────────────────────────────────
 
 async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv[0] === "status") statusCommand(); // subcommand, not a stage — parsed before flags; exits 0
+  const opts = parseArgs(argv);
+  if (DETACHED) {
+    detachedName = opts.name; // every child exit path below records job.status
+    opts.yes = true; // a detached child has no TTY — non-interactive by definition
+  }
+  if (opts.detach) {
+    if (opts.dryRun) {
+      console.log("note: --dry-run overrides --detach — printing the plan instead");
+    } else {
+      detachSpawn(opts, argv); // spawns arm64-resolved node, writes job.json, exits 0
+    }
+  }
   const nodeBin = resolveArm64Node() ?? process.execPath;
   const ctx = {
     name: opts.name,
@@ -428,11 +576,16 @@ async function main() {
 }
 
 process.on("SIGINT", () => {
+  interrupted = true;
   if (liveChild) liveChild.kill("SIGINT");
-  else process.exit(130);
+  else {
+    writeJobStatus(130, []);
+    process.exit(130);
+  }
 });
 
 main().catch((err) => {
   console.error(`error: ${err?.stack ?? err}`);
+  writeJobStatus(1, []);
   process.exit(1);
 });

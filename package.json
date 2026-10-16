@@ -19,6 +19,7 @@
     "serve": "node dist/server.js",
     "pipeline": "node scripts/pipeline.mjs",
     "pipeline:dry": "node scripts/pipeline.mjs --dry-run",
+    "pipeline:status": "node scripts/pipeline.mjs status",
     "eval:gate": "node scripts/eval-gate.mjs"
   },
   "keywords": [

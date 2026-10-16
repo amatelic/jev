@@ -63,6 +63,9 @@ git clone --depth 1 https://github.com/jaredpalmer/kev vendor/kev
 cd vendor/kev && uv sync && uv pip install onnx onnxruntime onnxconverter-common onnx-ir
 ```
 
+Run `node scripts/doctor.mjs` to check every prerequisite in one shot
+(`--fix` repairs what it can — see Automation below).
+
 ## Pipeline, stage by stage
 
 ### Stage 0 — cache models (network-resilient)
@@ -177,7 +180,9 @@ node scripts/eval-dataset.mjs kev-0.6b --gate                    # any baseline 
 
 Reports accuracy, per-category P/R/F1, confidence calibration bins, latency,
 and a machine-readable `RESULT` line. Reads the gate directly from `eval.mjs`
-so it can never drift from the shipped acceptance set.
+so it can never drift from the shipped acceptance set. The script re-execs
+itself under the ARM64 node when the shell node is x64-under-Rosetta and
+defaults to offline mode for local model paths — no PATH export needed.
 
 ## Script index
 
@@ -185,6 +190,7 @@ so it can never drift from the shipped acceptance set.
 |---|---|
 | `scripts/fetch-hf-cache.sh` | curl-based resumable HF cache builder (network-resilient) |
 | `scripts/shared/question.mjs` | single source of truth for the category question |
+| `scripts/shared/arm64.mjs` | arm64-node resolver + self re-exec helper (shared by the eval scripts) |
 | `scripts/generate-training-data.mjs` | seeded synthetic data + leakage/gate guards |
 | `scripts/convert-to-kev.mjs` | jev JSONL → kev trainer JSONL (criteria order = option order!) |
 | `scripts/download-model.mjs` | pre-download via open-jev with retry/backoff |
@@ -192,11 +198,12 @@ so it can never drift from the shipped acceptance set.
 | `scripts/quantize-kev-onnx.py` | q4 (+ best-effort q4f16) with fp32 head |
 | `scripts/package-kev-model.mjs` | config.json + tokenizer into a loadable dir |
 | `scripts/eval-dataset.mjs` | dataset-driven eval (holdout/gate, any model id/path) |
+| `scripts/doctor.mjs` | one-command environment doctor + guided bootstrap (`--fix`) |
 
 ## One-shot recap (copy-paste)
 
 ```bash
-export PATH="$HOME/.nvm/versions/node/<ver>-arm64/bin:$PATH"   # ARM64 node
+export PATH="$HOME/.nvm/versions/node/<ver>-arm64/bin:$PATH"   # optional — eval scripts self-re-exec under ARM64
 bash scripts/fetch-hf-cache.sh onnx-community/kev-0.6b-ONNX
 
 node scripts/generate-training-data.mjs
@@ -230,9 +237,15 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 
 ### npm scripts
 
-- `npm run pipeline` — one command for the full pipeline: `data` (stage 1) → `train` → `export` → `quantize` (stages 2–4, run inside the vendored `vendor/kev` uv env) → `package` (stage 5) → `eval` (stage 6), plus an optional default-off `fetch` stage. Useful flags: `--name <model>` (default `events-v1`), `--only a,b` / `--skip a,b` / `--from <stage>` for partial runs, `--yes` for non-interactive. A preflight check verifies every precondition (e.g. `vendor/kev` and its `.venv` for stages 2–4 — gitignored, so clone it first) and fails fast with a clear message instead of half-running. A full run includes the ~13-minute train stage; `--skip train` / `--from export` reuse an existing `vendor/kev/runs/<name>`.
+- `npm run pipeline` — one command for the full pipeline: `data` (stage 1) → `train` → `export` → `quantize` (stages 2–4, run inside the vendored `vendor/kev` uv env) → `package` (stage 5) → `eval` (stage 6), plus an optional default-off `fetch` stage. Useful flags: `--name <model>` (default `events-v1`), `--only a,b` / `--skip a,b` / `--from <stage>` for partial runs, `--yes` for non-interactive, and `--detach` to fire-and-forget: the run spawns as a detached child (implies `--yes`), appends output to `runs/<name>/pipeline.log`, and the parent exits 0 immediately — no more babysitting with `sleep`/`tail` loops. A preflight check verifies every precondition (e.g. `vendor/kev` and its `.venv` for stages 2–4 — gitignored, so clone it first) and fails fast with a clear message instead of half-running. A full run includes the ~13-minute train stage; `--skip train` / `--from export` reuse an existing `vendor/kev/runs/<name>`.
 - `npm run pipeline:dry` — prints the same stage plan (commands and prerequisite checks) without executing anything; use it to validate inputs before a real run.
-- `npm run eval:gate` — runs the official 50-event gate via `scripts/eval-gate.mjs` against `models/<name>` (default `events-v1`, override via arg or `JEV_MODEL` env) when it is packaged, falling back to the cached `kev-0.6b` baseline otherwise. It re-execs through the ARM64 node and sets `HF_HUB_OFFLINE=1` so nothing is downloaded.
+- `npm run pipeline:status` — table of detached runs (`node scripts/pipeline.mjs status`): state (running / done / failed / crashed), elapsed time or exit code, and log path, read from `runs/*/job.json` + `job.status`. Corrupt rows are skipped; it always exits 0. `runs/` is gitignored.
+- `npm run eval:gate` — runs the official 50-event gate via `scripts/eval-gate.mjs` against `models/<name>` (default `events-v1`, override via arg or `JEV_MODEL` env) when it is packaged, falling back to the cached `kev-0.6b` baseline otherwise. It re-execs through the ARM64 node (shared resolver in `scripts/shared/arm64.mjs`, which `scripts/eval-dataset.mjs` also self-re-execs through when called directly) and sets `HF_HUB_OFFLINE=1` so nothing is downloaded.
+
+### scripts/doctor.mjs — environment doctor
+
+- `node scripts/doctor.mjs` answers "is this machine ready for the pipeline?" in one run: node arch (Rosetta detection + ARM64-node discovery), npm deps and native binding arch, sharp arch match, HF cache repos, `vendor/kev` venv, pipeline artifacts, and disk space. Exit 0 when nothing fails (⚠ warnings allowed), 1 otherwise.
+- `--fix` repairs failing items (npm install, sharp arch reinstall, critical HF fetches, `--only data` regeneration) and prints a before → after table; `--fix --all` also bootstraps ⚠ items (HF fetches, vendor/kev clone — these download). `--json` emits machine-readable results.
 
 ### scripts/drift-eval.sh — periodic regression check
 
@@ -253,7 +266,8 @@ bash scripts/drift-eval.sh
 
 ## Repo hygiene notes
 
-- `vendor/`, `models/`, `*.onnx*` are gitignored; `data/*.jsonl` (the seeded,
+- `vendor/`, `models/`, `*.onnx*`, and `runs/` (throwaway detached-run logs)
+  are gitignored; `data/*.jsonl` (the seeded,
   reproducible datasets) and all `scripts/` are committed.
 - The run's provenance (args, base, init checkpoint) is recorded by the trainer
   in `vendor/kev/runs/<name>/` — keep it with any shipped model.
