@@ -200,6 +200,7 @@ defaults to offline mode for local model paths — no PATH export needed.
 | `scripts/eval-dataset.mjs` | dataset-driven eval (holdout/gate, any model id/path) |
 | `scripts/doctor.mjs` | one-command environment doctor + guided bootstrap (`--fix`) |
 | `scripts/progress.mjs` | auto-maintained `PROGRESS.md` model log (`start`/`finish`/`list`) with deltas vs the previous result |
+| `scripts/sync-models.mjs` | regenerates `src/models.generated.ts` from `models/` — TypeBox alias union + listModels entries for local fine-tunes |
 | `scripts/sandbox.mjs` | `npm run sandbox` runner — copies the template to a gitignored `sandbox/`, `--reset` restores it |
 
 ## One-shot recap (copy-paste)
@@ -253,9 +254,15 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 
 ### npm run sandbox — throwaway playground
 
-- `npm run sandbox` copies `templates/sandbox/` into a gitignored `sandbox/` working copy and runs it under the ARM64 node with `HF_HUB_OFFLINE=1`: the demo loads the newest local `models/<name>` (falling back to cached `kev-0.6b`) and asks all three question types — choice, noul, score — over a few example states.
-- Edit `sandbox/play.mjs` freely — the copy is invisible to git, so scratch edits never appear in `git status` or risk being committed, while the committed template stays pristine.
-- `npm run sandbox:reset` deletes the copy and restores the template default. Extra args are forwarded to the play script: `npm run sandbox -- --flag`.
+- `npm run sandbox` copies `templates/sandbox/` into a gitignored `sandbox/` working copy and runs it under the ARM64 node with `HF_HUB_OFFLINE=1`.
+- **`sandbox/states.txt` is the file to play with** — one event per line (`#` = comment); `play.mjs` (47 lines) just loads the newest local `models/<name>` (falling back to cached `kev-0.6b`) and classifies each state: `category  confidence  state`.
+- Edits in `sandbox/` are invisible to git — scratch experiments never appear in `git status` or risk being committed; the committed template stays pristine.
+- `npm run sandbox:reset` deletes the copy and restores the template default. Extra args are forwarded: `npm run sandbox -- --flag`.
+
+### npm run models:sync — first-class aliases for local fine-tunes
+
+- `npm run models:sync` regenerates `src/models.generated.ts` from the `models/` directory: every packaged fine-tune (`models/<name>/onnx/`) joins the `ModelAliasSchema` TypeBox union — real editor autocomplete and compile-time rejection of typos in `createJev({ model: ... })` — plus `listModels()` (family + payload size from the model's own `config.json`) and runtime resolution to an absolute local path.
+- Run it after `npm run pipeline` packages a new model, and commit the generated file (fresh clones keep typechecking; a registered-but-missing payload warns clearly at load). This automates the manual `src/index.ts` extension from TRAINING.md §7.
 
 ### scripts/doctor.mjs — environment doctor
 

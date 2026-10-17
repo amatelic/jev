@@ -205,7 +205,7 @@ import("open-jev").then(async ({ OpenJev, choice }) => {
 })'
 ```
 
-To make it a first-class alias in `@amatelic/jev` itself (so `createJev({ model: "my-kev" })` validates), extend `src/index.ts`: `MODEL_REPOS` (alias→repo), `MODEL_SIZES` (bytes), the `ModelAliasSchema` TypeBox literals, and the `family: alias.startsWith("kev") ? "kev" : "open-jev"` heuristic in `models()`.
+To make it a first-class alias in `@amatelic/jev` itself (so `createJev({ model: "my-kev" })` validates), extend `src/index.ts`: `MODEL_REPOS` (alias→repo), `MODEL_SIZES` (bytes), the `ModelAliasSchema` TypeBox literals, and the `family: alias.startsWith("kev") ? "kev" : "open-jev"` heuristic in `models()`. In the jev repo this is automated: run `npm run models:sync` after packaging — it regenerates the alias union (with compile-time autocomplete) and the `listModels()` entries from the `models/` directory.
 
 ## 8. Evaluating
 

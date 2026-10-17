@@ -23,11 +23,13 @@ import {
   DecideRequestSchema,
   DecideResponseSchema,
   JevConfigSchema,
+  ModelAliasSchema,
   // Types
   type Question,
   type JevClient,
   type ModelInfo,
 } from "./index.js";
+import { LOCAL_MODELS } from "./models.generated.js";
 
 // ─── Schema validation tests (no model needed) ─────────────────────
 
@@ -232,20 +234,34 @@ describe("schemas", () => {
 // ─── Model management tests ─────────────────────────────────────────
 
 describe("model management", () => {
-  it("listModels returns all three models with metadata", async () => {
+  const HUB_ALIASES = ["kev-0.6b", "kev-4b", "open-jev"];
+
+  it("listModels returns the hub models (plus any local fine-tunes present)", async () => {
     const models = await listModels();
     const aliases = models.map((m: ModelInfo) => m.alias);
 
-    expect(aliases).toContain("kev-0.6b");
-    expect(aliases).toContain("kev-4b");
-    expect(aliases).toContain("open-jev");
-    expect(models.length).toBe(3);
+    for (const hub of HUB_ALIASES) expect(aliases).toContain(hub);
+    expect(models.length).toBeGreaterThanOrEqual(HUB_ALIASES.length);
 
     for (const m of models) {
-      expect(m.repo).toMatch(/^onnx-community\//);
-      expect(m.downloadSizeBytes).toBeGreaterThan(0);
+      const isHub = HUB_ALIASES.includes(m.alias);
+
+      if (isHub) expect(m.repo).toMatch(/^onnx-community\//);
+      else {
+        // local fine-tunes come from the generated registry, are always
+        // cached (their directory is present), and carry the payload size
+        expect(LOCAL_MODELS.map((x) => x.alias)).toContain(m.alias);
+        expect(m.cached).toBe(true);
+        expect(m.downloadSizeBytes).toBeGreaterThan(0);
+      }
       expect(typeof m.cached).toBe("boolean");
-      expect(["kev", "open-jev"]).toContain(m.family);
+      expect(["kev", "open-jev", "unknown"]).toContain(m.family);
+    }
+  });
+
+  it("generated local model aliases pass ModelAliasSchema (autocomplete is real)", () => {
+    for (const m of LOCAL_MODELS) {
+      expect(Value.Check(ModelAliasSchema, m.alias)).toBe(true);
     }
   });
 

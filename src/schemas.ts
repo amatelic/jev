@@ -4,6 +4,7 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
+import { LOCAL_MODELS } from "./models.generated.js";
 
 // ─── Questions ─────────────────────────────────────────────────────
 
@@ -115,10 +116,15 @@ export type DecideResponse = Static<typeof DecideResponseSchema>;
 
 // ─── Model management ──────────────────────────────────────────────
 
+// Hub aliases + every packaged fine-tune discovered in models/ by
+// `npm run models:sync` (src/models.generated.ts). Adding a local model
+// and re-running the sync extends this union — full autocomplete for
+// createJev({ model: ... }) with zero manual schema edits.
 export const ModelAliasSchema = Type.Union([
   Type.Literal("kev-0.6b"),
   Type.Literal("kev-4b"),
   Type.Literal("open-jev"),
+  ...LOCAL_MODELS.map((m) => Type.Literal(m.alias)),
 ]);
 
 export const ModelInfoSchema = Type.Object({
