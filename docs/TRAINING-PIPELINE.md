@@ -199,6 +199,8 @@ defaults to offline mode for local model paths — no PATH export needed.
 | `scripts/package-kev-model.mjs` | config.json + tokenizer into a loadable dir |
 | `scripts/eval-dataset.mjs` | dataset-driven eval (holdout/gate, any model id/path) |
 | `scripts/doctor.mjs` | one-command environment doctor + guided bootstrap (`--fix`) |
+| `scripts/progress.mjs` | auto-maintained `PROGRESS.md` model log (`start`/`finish`/`list`) with deltas vs the previous result |
+| `scripts/sandbox.mjs` | `npm run sandbox` runner — copies the template to a gitignored `sandbox/`, `--reset` restores it |
 
 ## One-shot recap (copy-paste)
 
@@ -241,6 +243,19 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 - `npm run pipeline:dry` — prints the same stage plan (commands and prerequisite checks) without executing anything; use it to validate inputs before a real run.
 - `npm run pipeline:status` — table of detached runs (`node scripts/pipeline.mjs status`): state (running / done / failed / crashed), elapsed time or exit code, and log path, read from `runs/*/job.json` + `job.status`. Corrupt rows are skipped; it always exits 0. `runs/` is gitignored.
 - `npm run eval:gate` — runs the official 50-event gate via `scripts/eval-gate.mjs` against `models/<name>` (default `events-v1`, override via arg or `JEV_MODEL` env) when it is packaged, falling back to the cached `kev-0.6b` baseline otherwise. It re-execs through the ARM64 node (shared resolver in `scripts/shared/arm64.mjs`, which `scripts/eval-dataset.mjs` also self-re-execs through when called directly) and sets `HF_HUB_OFFLINE=1` so nothing is downloaded.
+- `npm run sandbox` / `npm run sandbox:reset` — throwaway playground, see below.
+
+### PROGRESS.md — model progress log
+
+- `scripts/progress.mjs` auto-maintains the repo-root `PROGRESS.md`: pipeline runs whose plan includes the `train` stage log an entry at training start (git SHA, base, hyperparameters) and fill in the parsed gate/holdout results at exit. `--dry-run`, `--only data`, `--only eval`, and `status` never write it, and a progress failure is only a warning — it cannot break the pipeline.
+- Each result renders its delta vs the most recent earlier entry with results, preferring an earlier same-name entry (an eval re-run compares against the model's own last result); the first entry renders `—`.
+- Entries live in a `json` fence inside the file — the single source of truth the tables render from. The CLI also supports manual `start`/`finish` (`--gate/--holdout`, `--from-job`, `--failed`) and `list`, which is how detached runs and eval-only re-runs get recorded.
+
+### npm run sandbox — throwaway playground
+
+- `npm run sandbox` copies `templates/sandbox/` into a gitignored `sandbox/` working copy and runs it under the ARM64 node with `HF_HUB_OFFLINE=1`: the demo loads the newest local `models/<name>` (falling back to cached `kev-0.6b`) and asks all three question types — choice, noul, score — over a few example states.
+- Edit `sandbox/play.mjs` freely — the copy is invisible to git, so scratch edits never appear in `git status` or risk being committed, while the committed template stays pristine.
+- `npm run sandbox:reset` deletes the copy and restores the template default. Extra args are forwarded to the play script: `npm run sandbox -- --flag`.
 
 ### scripts/doctor.mjs — environment doctor
 
@@ -266,7 +281,8 @@ bash scripts/drift-eval.sh
 
 ## Repo hygiene notes
 
-- `vendor/`, `models/`, `*.onnx*`, and `runs/` (throwaway detached-run logs)
+- `vendor/`, `models/`, `*.onnx*`, `runs/` (throwaway detached-run logs), and
+  `/sandbox/` (throwaway playground copy — the template in `templates/sandbox/` stays committed)
   are gitignored; `data/*.jsonl` (the seeded,
   reproducible datasets) and all `scripts/` are committed.
 - The run's provenance (args, base, init checkpoint) is recorded by the trainer

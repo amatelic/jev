@@ -50,6 +50,8 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline/promises";
 
+import { currentShortSha, finishEntry, startEntry } from "./progress.mjs"; // PROGRESS.md model log (train-stage runs only)
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNS_DIR = join(ROOT, "runs"); // repo-root runs/ (throwaway, gitignored) — NOT vendor/kev/runs
 const ARM64_NVM_NODE = join(homedir(), ".nvm/versions/node/v24.21.0-arm64/bin/node");
@@ -58,6 +60,7 @@ const ARM64_NVM_NODE = join(homedir(), ".nvm/versions/node/v24.21.0-arm64/bin/no
 const DETACHED = process.env.PIPELINE_DETACHED === "1";
 let detachedName = null; // set in main() so every exit path can record job.status
 let interrupted = false; // set by SIGINT so finish() reports 130 in job.status
+let progressEntryName = null; // set in main() when startEntry() logged this run; finish() closes it
 
 // Verified reference numbers (docs/TRAINING-PIPELINE.md, EVENTS-V1.md).
 const BASELINES = [
@@ -464,7 +467,36 @@ function finish(timings, results, ctx, code) {
   }
   printSummary(results, ctx);
   writeJobStatus(interrupted ? 130 : code, results);
+  if (progressEntryName) {
+    try {
+      finishEntry(
+        progressEntryName,
+        results.map(({ dataset, acc, avgMs }) => ({ dataset, acc, avgMs })),
+        { failed: code !== 0 },
+      );
+    } catch (err) {
+      console.error(`warning: PROGRESS.md update failed — ${err?.message ?? err}`); // progress must never break the pipeline
+    }
+  }
   process.exit(code);
+}
+
+// ─── Progress log hook (PROGRESS.md) ─────────────────────────────────
+
+// "lr 2e-5 · 3 epochs · batch 8" from the train stage's step args.
+function trainHyper(plan, ctx) {
+  const stage = plan.find((s) => s.name === "train");
+  if (!stage) return null;
+  const args = stage.run(ctx).find((st) => st.args?.includes("--lr"))?.args ?? [];
+  const val = (f) => {
+    const i = args.indexOf(f);
+    return i >= 0 ? args[i + 1] : null;
+  };
+  const parts = [];
+  if (val("--lr")) parts.push(`lr ${val("--lr")}`);
+  if (val("--epochs")) parts.push(`${val("--epochs")} epochs`);
+  if (val("--batch")) parts.push(`batch ${val("--batch")}`);
+  return parts.join(" · ") || null;
 }
 
 // ─── Output ──────────────────────────────────────────────────────────
@@ -544,6 +576,25 @@ async function main() {
     if (!/^y(es)?$/i.test(answer.trim())) {
       console.log("aborted");
       process.exit(130);
+    }
+  }
+
+  // Progress log: only runs that actually train get a PROGRESS.md entry
+  // (--dry-run returned above; --only data/--only eval never reach here with
+  // a "train" stage). Progress failure must never break the pipeline.
+  if (plan.some((s) => s.name === "train")) {
+    try {
+      startEntry({
+        name: ctx.name,
+        gitSha: currentShortSha(),
+        base: "jaredpalmer/kev-0.6b",
+        hyper: trainHyper(plan, ctx),
+        dataNotes: "seed 42 · kev-train.jsonl",
+      });
+      progressEntryName = ctx.name;
+      console.log(`progress: logged training start for ${ctx.name} (PROGRESS.md)`);
+    } catch (err) {
+      console.error(`warning: PROGRESS.md start failed — ${err?.message ?? err}`);
     }
   }
 

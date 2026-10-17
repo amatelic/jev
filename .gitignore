@@ -8,3 +8,4 @@ models/
 nohup.out
 data/eval-history.log
 runs/
+/sandbox/
