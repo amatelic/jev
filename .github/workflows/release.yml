@@ -1,0 +1,61 @@
+# Release workflow — build the tarball consumers install from, so the repo
+# never carries build output (dist/) and consumers never run build scripts.
+#
+# On pushing a tag (v*): npm ci → npm pack → attach the .tgz to a GitHub
+# Release. Consumers install it directly:
+#   npm install github:amatelic/jev#v0.1.1  ← no, tarball only:
+#   npm install https://github.com/amatelic/jev/releases/download/v0.1.1/amatelic-jev-0.1.1.tgz
+#
+# Endgame remains `npm publish` (same tarball, registry-hosted) — this flow
+# keeps the artifact identical and the migration one line.
+
+name: Release
+
+"on":
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build + pack
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm pack
+          ls -la ./*.tgz
+
+      - name: Attach tarball to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Install (no build scripts, no devDependencies — dist ships in the tarball)
+
+            ```
+            npm install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/amatelic-jev-${{ github.ref_name }}.tgz
+            ```
+
+            Or in package.json (pin the exact version):
+
+            ```json
+            "dependencies": {
+              "@amatelic/jev": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/amatelic-jev-${{ github.ref_name }}.tgz"
+            }
+            ```
+
+            Note: `open-jev` is an optional peer — keep it in your own dependencies for
+            native in-process inference; without it `createJev` falls back to HTTP mode.
+          files: ./*.tgz

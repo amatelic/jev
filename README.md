@@ -86,6 +86,23 @@ npm install @amatelic/jev
 # Works immediately — model downloads to ~/.cache/transformers/
 ```
 
+### Installing from GitHub (not yet on npm)
+
+Install from a **release tarball** — it ships the compiled `dist/`, runs no
+build scripts, and downloads no devDependencies:
+
+```jsonc
+// package.json — pin the exact release
+"dependencies": {
+  "@amatelic/jev": "https://github.com/amatelic/jev/releases/download/v0.1.1/amatelic-jev-0.1.1.tgz"
+}
+```
+
+Tarballs are built by CI (`.github/workflows/release.yml`) on every `v*` tag.
+`open-jev` (the inference runtime) is an **optional peer** — keep it in your
+own dependencies for native in-process inference; without it `createJev`
+falls back to HTTP mode. (The repo itself never carries build output.)
+
 ## x64 Mac (Docker fallback)
 
 ```bash
@@ -95,6 +112,9 @@ docker run -d -p 9401:9401 -v jev-cache:/root/.cache \
 
 # Your code stays the same — mode: "auto" detects and uses HTTP
 ```
+
+The server answers **both** `POST /decide` and `POST /ai/jev/decide` (the
+route prefix Nomadia's crawler uses) — same request/response body.
 
 ## Architecture
 
