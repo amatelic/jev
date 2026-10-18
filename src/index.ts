@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import type { Answer, Question, JevConfig, ModelInfo, ModelAlias } from "./schemas.js";
 import { DecideRequestSchema, DecideResponseSchema } from "./schemas.js";
 import { LOCAL_MODELS, REMOTE_MODELS } from "./models.generated.js";
+import { buildNativeQuestion, mapNativeAnswer } from "./mapping.js";
 
 // ─── Model registry (mirrors open-jev's MODELS) ────────────────────
 
@@ -120,49 +121,7 @@ async function tryNativeLoad(
   }
 }
 
-function mapNativeAnswer(raw: Record<string, unknown>, question: Question): Answer {
-  if (question.kind === "choice") {
-    const choice = String(raw.choice ?? "");
-    const confidence = Number(raw.confidence ?? 0);
-    const probabilities = (raw.probabilities ?? {}) as Record<string, number>;
-
-    return { kind: "choice", id: question.id, choice, confidence, probabilities };
-  }
-
-  if (question.kind === "noul") {
-    return {
-      kind: "noul",
-      id: question.id,
-      answer: Boolean(raw.answer),
-      probability: Number(raw.probability ?? 0),
-      confidence: Number(raw.confidence ?? 0),
-    };
-  }
-
-  return {
-    kind: "score",
-    id: question.id,
-    score: Number(raw.score ?? 0),
-    normalized: Number(raw.normalized ?? 0),
-    level: String(raw.level ?? ""),
-    confidence: Number(raw.confidence ?? 0),
-  };
-}
-
 // ─── HTTP transport (Docker / remote) ──────────────────────────────
-
-// Map a JEV-schema question to open-jev's runtime shape (what choice()/noul()/score()
-// produce). The HTTP server path (server.ts buildQuestion) does exactly this; the
-// native path must match it or open-jev rejects "kind"/"prompt" questions.
-function buildNativeQuestion(q: Question): Record<string, unknown> {
-  if (q.kind === "choice") {
-    return { type: "choice", instructions: q.prompt, options: q.options, descriptions: q.descriptions };
-  }
-  if (q.kind === "noul") {
-    return { type: "noul", instructions: q.prompt };
-  }
-  return { type: "score", instructions: q.prompt, options: q.levels };
-}
 
 // ─── Model listing (client-free) ─────────────────────────────────────
 // Pure registry data + a metadata-only cache probe per repo (OpenJev.info
@@ -239,6 +198,7 @@ async function httpDecide(
   url: string,
   state: string,
   questions: readonly Question[],
+  timeoutMs: number = HTTP_TIMEOUT_MS,
 ): Promise<Answer[]> {
   const body = JSON.stringify({ state, questions });
 
@@ -248,7 +208,7 @@ async function httpDecide(
       method: "POST",
       headers: { "content-type": "application/json" },
       body,
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw new Error(
@@ -327,7 +287,7 @@ export async function createJev(options: CreateJevOptions = {}): Promise<JevClie
       );
     }
 
-    return httpDecide(url, state, questions);
+    return httpDecide(url, state, questions, options.timeoutMs);
   };
 
   const models = async (): Promise<ModelInfo[]> => buildModelList(dtype);

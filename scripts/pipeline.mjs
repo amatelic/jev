@@ -135,15 +135,9 @@ const STAGES = [
   },
   {
     name: "package",
-    description: "write config.json + tokenizer, then tidy model*.onnx* into onnx/ (loadable layout)",
+    description: "write config.json + tokenizer + tidy graphs into onnx/ (loadable layout)",
     run: (ctx) => [
       { cmd: ctx.nodeBin, args: ["scripts/package-kev-model.mjs", ctx.name], cwd: ctx.root, label: "package" },
-      {
-        cmd: "bash",
-        args: ["-c", `mkdir -p models/${ctx.name}/onnx && mv models/${ctx.name}/model*.onnx* models/${ctx.name}/onnx/`],
-        cwd: ctx.root,
-        label: "move graphs into onnx/",
-      },
     ],
   },
   {

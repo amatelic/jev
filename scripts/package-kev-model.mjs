@@ -8,7 +8,7 @@
  * Writes: models/<name>/{config.json, tokenizer files}
  */
 
-import { cpSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -93,4 +93,14 @@ for (const f of ["model.onnx", "model_q4.onnx", "model_q4.onnx_data", "model_q4f
 }
 }
 console.log(`  package total (onnx): ${total.toFixed(0)} MB`);
+// ── tidy: quantize drops model*.onnx* at the top level; the runtime wants
+// them under onnx/ — move them so the package dir is directly loadable.
+if (!tidied) {
+  mkdirSync(join(outDir, "onnx"), { recursive: true });
+  for (const f of readdirSync(outDir).filter((f) => /^model.*\.onnx(_data)?$/.test(f))) {
+    renameSync(join(outDir, f), join(outDir, "onnx", f));
+    console.log(`→ onnx/${f}`);
+  }
+}
+
 console.log(`\nnext: node scripts/eval-dataset.mjs $(pwd)/${outDir}`);

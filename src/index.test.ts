@@ -386,6 +386,27 @@ describe("createJev + decide", { timeout: 120_000 }, () => {
     ).rejects.toThrow(/Invalid request/);
   });
 
+  it("switch() in HTTP mode throws a clear error instead of lying", async () => {
+    // No server needed — the throw happens before any network call.
+    const jevHttp = await createJev({ model: "kev-0.6b", mode: "http", url: "http://localhost:59999" });
+    await expect(jevHttp.switch("kev-4b")).rejects.toThrow(/requires a native client/);
+    expect(jevHttp.model).toBe("kev-0.6b"); // label unchanged after failed switch
+    await jevHttp.dispose();
+  });
+
+  it("switch() reloads and keeps the client usable (native)", async () => {
+    if (!jev || jev.mode !== "native") return; // skip: native unavailable
+
+    await jev.switch("kev-0.6b"); // same model — exercises load-new-then-dispose-old
+    expect(jev.model).toBe("kev-0.6b");
+
+    const [answer] = await jev.decide("Event: yoga in the park morning session", [
+      { id: "cat", kind: "choice", prompt: "What type of event is this?", options: ["sports", "wellness"] },
+    ]);
+    expect(answer.kind).toBe("choice");
+    expect(["sports", "wellness"]).toContain((answer as { choice: string }).choice);
+  });
+
   it("produces consistent answers for the same input (deterministic)", async () => {
     if (!jev) return;
     const question: Question = {

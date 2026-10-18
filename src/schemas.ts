@@ -173,6 +173,7 @@ export const JevConfigSchema = Type.Object({
     Type.Literal("http"),
   ])),
   url: Type.Optional(Type.String({ maxLength: 500 })),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 600_000 })),
 });
 
 export type JevConfig = Static<typeof JevConfigSchema>;

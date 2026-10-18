@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { Value } from "@sinclair/typebox/value";
 import { DecideRequestSchema, DecideResponseSchema } from "./schemas.js";
 import type { Question, Answer } from "./schemas.js";
+import { buildNativeQuestion, mapNativeAnswer } from "./mapping.js";
 
 const PORT = Number.parseInt(process.env.JEV_PORT ?? process.argv.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "9401", 10);
 const MODEL = process.env.JEV_MODEL ?? process.argv.find((a) => a.startsWith("--model="))?.split("=")[1] ?? "kev-0.6b";
@@ -21,21 +22,17 @@ if (!VALID_DTYPES.has(DTYPE)) {
 }
 
 async function main(): Promise<void> {
-  const { OpenJev, choice, noul, score } = await import("open-jev");
+  const { OpenJev } = await import("open-jev");
 
   console.log(`Loading ${MODEL} (${DTYPE})...`);
   // DTYPE was validated against VALID_DTYPES above; narrow for open-jev's union.
   const runtime = await OpenJev.load({ model: MODEL, device: "cpu", dtype: DTYPE as "q4" | "q4f16" | "fp16" | "fp32" | "auto" });
   console.log(`✅ ${MODEL} loaded`);
 
-  const buildQuestion = (q: Question): unknown => {
-    if (q.kind === "choice") return choice(q.prompt, q.options, q.descriptions);
-    if (q.kind === "noul") return noul(q.prompt);
-    return score(q.prompt, q.levels);
-  };
-
   const server = createServer((req, res) => {
-    if (req.method !== "POST" || req.url !== "/decide") {
+    // Both routes, same handler: /decide (documented default) and
+    // /ai/jev/decide (the prefix Nomadia's crawler calls).
+    if (req.method !== "POST" || (req.url !== "/decide" && req.url !== "/ai/jev/decide")) {
       res.writeHead(404).end();
       return;
     }
@@ -57,40 +54,14 @@ async function main(): Promise<void> {
 
         const { state, questions } = parsed as { state: string; questions: Question[] };
         const t0 = Date.now();
-        const built = questions.map(buildQuestion);
-        // SAFETY: our Question[] maps to open-jev Questions at this boundary.
+        // SAFETY: shared with the native transport (src/mapping.ts) — the two
+        // paths can never drift apart.
+        const built = questions.map(buildNativeQuestion);
         const rawAnswers = (await runtime.decide(state, built as never)) as unknown[];
 
-        const answers: Answer[] = questions.map((q, i) => {
-          const raw = (rawAnswers[i] ?? {}) as Record<string, unknown>;
-
-          if (q.kind === "choice") {
-            return {
-              kind: "choice" as const,
-              id: q.id,
-              choice: String(raw.choice ?? ""),
-              confidence: Number(raw.confidence ?? 0),
-              probabilities: (raw.probabilities ?? {}) as Record<string, number>,
-            };
-          }
-          if (q.kind === "noul") {
-            return {
-              kind: "noul" as const,
-              id: q.id,
-              answer: Boolean(raw.answer),
-              probability: Number(raw.probability ?? 0),
-              confidence: Number(raw.confidence ?? 0),
-            };
-          }
-          return {
-            kind: "score" as const,
-            id: q.id,
-            score: Number(raw.score ?? 0),
-            normalized: Number(raw.normalized ?? 0),
-            level: String(raw.level ?? ""),
-            confidence: Number(raw.confidence ?? 0),
-          };
-        });
+        const answers: Answer[] = questions.map((q, i) =>
+          mapNativeAnswer((rawAnswers[i] ?? {}) as Record<string, unknown>, q),
+        );
 
         const response = { ok: true, answers, model: MODEL, durationMs: Date.now() - t0 };
 
