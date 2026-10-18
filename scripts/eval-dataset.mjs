@@ -21,13 +21,14 @@ import { reexecIfWrongArch } from "./shared/arm64.mjs";
 // Positionals + flags — order-independent: `--gate kev-4b` and `kev-4b --gate`
 // both work; unknown flags/positionals error instead of being silently ignored.
 const argv = process.argv.slice(2);
-const flags = new Set(["--gate", "--list"]);
+const ALLOWED_FLAGS = new Set(["--gate", "--list"]);
+const flags = new Set(); // flags actually present on THIS command line
 const positionals = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a.startsWith("--")) {
-    if (!flags.has(a)) {
-      console.error(`error: unknown flag "${a}" — valid: ${[...flags].join(" ")} <model> [split]`);
+    if (!ALLOWED_FLAGS.has(a)) {
+      console.error(`error: unknown flag "${a}" — valid: ${[...ALLOWED_FLAGS].join(" ")} <model> [split]`);
       process.exit(2);
     }
     flags.add(a);

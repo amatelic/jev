@@ -11,6 +11,14 @@ Auto-written by `scripts/progress.mjs` — manual edits to entries will be overw
   if none exists (that is how eval-only re-runs get recorded).
 
 ## Entries (newest first)
+| events-v2 | evaluated · 2026-10-18 · bd052bb |
+| --- | --- |
+| base | jaredpalmer/kev-0.6b |
+| hyper | lr 2e-5 · 3 epochs · batch 8 |
+| data | seed 42 · kev-train.jsonl |
+| gate | 100.0 (prev events-v1 100.0 → +0.0) @176ms |
+| gate | 100.0 (prev events-v1 100.0 → +0.0) @166ms |
+
 | events-v1 | evaluated · 2026-10-13 · 31bb5ed |
 | --- | --- |
 | base | jaredpalmer/kev-0.6b (LoRA delta) |
@@ -46,6 +54,44 @@ Auto-written by `scripts/progress.mjs` — manual edits to entries will be overw
     ],
     "deltas": null,
     "note": "first fine-tune; beats kev-4b ceiling at 0.6b latency"
+  },
+  {
+    "name": "events-v2",
+    "startedAt": "2026-10-18T20:37:44.356Z",
+    "status": "evaluated",
+    "gitSha": "bd052bb",
+    "base": "jaredpalmer/kev-0.6b",
+    "dataNotes": "1174 = 1000 original + 87 disagreement-mined ×2 (pool seed 999, train banks only)",
+    "hyper": "lr 2e-5 · 3 epochs · batch 8",
+    "results": [
+      {
+        "dataset": "gate",
+        "acc": 100,
+        "avgMs": 176
+      },
+      {
+        "dataset": "holdout",
+        "acc": 97.2,
+        "avgMs": 163
+      }
+    ],
+    "deltas": {
+      "gate": {
+        "prev": "events-v1",
+        "prevAcc": 100,
+        "dAcc": 0,
+        "prevMs": 240,
+        "dMs": -64
+      },
+      "holdout": {
+        "prev": "events-v1",
+        "prevAcc": 96.4,
+        "dAcc": 0.8,
+        "prevMs": 170,
+        "dMs": -7
+      }
+    },
+    "note": null
   }
 ]
 ```

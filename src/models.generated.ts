@@ -6,7 +6,7 @@
  * local-only ones error clearly when their payload is absent.
  */
 
-export type LocalModelAlias = "events-v1";
+export type LocalModelAlias = "events-v1" | "events-v2";
 export type RemoteModelAlias = never;
 export type CustomModelAlias = LocalModelAlias | RemoteModelAlias;
 
@@ -27,6 +27,7 @@ export interface RemoteModel {
 
 export const LOCAL_MODELS: readonly LocalModel[] = [
   { alias: "events-v1", path: "models/events-v1", family: "kev", sizeBytes: 3288760928, displayName: "Events classifier v1 (kev-0.6b fine-tune)" },
+  { alias: "events-v2", path: "models/events-v2", family: "kev", sizeBytes: 3288760928, displayName: "Events classifier v2 (+mined Czech fixes)" },
 ];
 
 export const REMOTE_MODELS: readonly RemoteModel[] = [
