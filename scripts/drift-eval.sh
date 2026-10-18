@@ -10,9 +10,19 @@
 
 set -euo pipefail
 
-# No PATH/arm64 handling needed here: scripts/eval-dataset.mjs self-re-execs
-# through the shared ARM64 resolver (scripts/shared/arm64.mjs) when started
-# under the x64-under-Rosetta shell node.
+# launchd/cron environments have a minimal PATH (often no node at all).
+# Find one: PATH first, else the newest nvm ARM64 build (NVM_DIR-aware).
+# eval-dataset.mjs then self-re-execs under the right arch via shared/arm64.mjs.
+if ! command -v node > /dev/null 2>&1; then
+  NVM_ROOT="${NVM_DIR:-$HOME/.nvm}"
+  NODE_BIN="$(ls -d "$NVM_ROOT"/versions/node/*-arm64/bin 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$NODE_BIN" ]; then
+    export PATH="$NODE_BIN:$PATH"
+  else
+    echo "error: no node on PATH and no nvm ARM64 build found" >&2
+    exit 1
+  fi
+fi
 
 # Models are pre-cached in ~/.cache/huggingface; forbid all network access.
 export HF_HUB_OFFLINE=1

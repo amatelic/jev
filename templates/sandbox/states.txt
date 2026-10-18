@@ -1,14 +1,18 @@
 # sandbox states — one event per line (# lines are ignored)
 # Edit freely, nothing here is committed. Then: npm run sandbox
+#
+# Optional label: end a line with " | category" to check the prediction (✓/✗).
 # Mix of easy cases and the baselines' known weak spots:
 
-HC Sparta Praha – HC Kometa Brno hockey match
-Deep Purple concert at Budapest Arena
-Mucha Foundation Art Museum Art Nouveau exhibition
-Silent Book Club Tuesday Edition reading group
-Agave Fest 2026 tequila mezcal Mexican
-Hike to Cueva Cerdaña mountain trail
-Jóga v parku ranní lekce
-Cycling Tour Valencia bike routes
-DesignBlok 2026 Prague Design Festival
-OKTAGON 100 MMA fighting championship
+HC Sparta Praha – HC Kometa Brno hockey match | sports
+Deep Purple concert at Budapest Arena | concert
+Mucha Foundation Art Museum Art Nouveau exhibition | exhibition
+Silent Book Club Tuesday Edition reading group | networking
+Agave Fest 2026 tequila mezcal Mexican | dining
+Hike to Cueva Cerdaña mountain trail | outdoor
+Jóga v parku ranní lekce | wellness
+Cycling Tour Valencia bike routes | outdoor
+DesignBlok 2026 Prague Design Festival | exhibition
+OKTAGON 100 MMA fighting championship | sports
+Trdelník baking workshop at Prague Christmas market
+Vinice na Petříně wine tasting evening
