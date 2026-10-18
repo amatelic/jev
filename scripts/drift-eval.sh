@@ -10,12 +10,9 @@
 
 set -euo pipefail
 
-# The default shell node is x64-under-Rosetta; onnxruntime-node needs the
-# ARM64 build for native CPU inference. Prepend the ARM64 dir when present.
-ARM_NODE_BIN="$HOME/.nvm/versions/node/v24.21.0-arm64/bin"
-if [ -x "$ARM_NODE_BIN/node" ]; then
-  export PATH="$ARM_NODE_BIN:$PATH"
-fi
+# No PATH/arm64 handling needed here: scripts/eval-dataset.mjs self-re-execs
+# through the shared ARM64 resolver (scripts/shared/arm64.mjs) when started
+# under the x64-under-Rosetta shell node.
 
 # Models are pre-cached in ~/.cache/huggingface; forbid all network access.
 export HF_HUB_OFFLINE=1

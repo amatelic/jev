@@ -34,7 +34,7 @@ jobs:
       # Correctness note: the model-dependent tests in src/index.test.ts self-skip
       # when the model cannot load (beforeAll try/catch), so on a cold cache this
       # step degrades to schema-only tests instead of failing CI. With a warm cache
-      # the full 38-test suite runs against real ONNX models, fully offline.
+      # the full suite runs against real ONNX models, fully offline.
       - name: Cache HuggingFace models
         uses: actions/cache@v4
         with:

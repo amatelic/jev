@@ -45,16 +45,16 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline/promises";
 
 import { currentShortSha, finishEntry, startEntry } from "./progress.mjs"; // PROGRESS.md model log (train-stage runs only)
+import { resolveArm64Node } from "./shared/arm64.mjs"; // glob-newest arm64 resolver, NVM_DIR-aware
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNS_DIR = join(ROOT, "runs"); // repo-root runs/ (throwaway, gitignored) — NOT vendor/kev/runs
-const ARM64_NVM_NODE = join(homedir(), ".nvm/versions/node/v24.21.0-arm64/bin/node");
 
 // State for detached children (PIPELINE_DETACHED=1 is set by the --detach parent).
 const DETACHED = process.env.PIPELINE_DETACHED === "1";
@@ -180,8 +180,17 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const [flag, eqVal] = a.includes("=") ? a.split(/=(.*)/, 2) : [a, undefined];
-    const next = () => (eqVal !== undefined ? eqVal : value(flag, argv[++i]));
+    const [flag, eqVal] = a.split(/=(.*)/, 2);
+    const next = () => {
+      if (eqVal !== undefined) {
+        if (eqVal === "") {
+          console.error(`error: ${flag} requires a non-empty value\n${USAGE}`);
+          process.exit(2);
+        }
+        return eqVal;
+      }
+      return value(flag, argv[++i]);
+    };
     if (flag === "--name") opts.name = next();
     else if (flag === "--only") opts.only = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--skip") opts.skip = next().split(",").map((s) => s.trim()).filter(Boolean);
@@ -314,11 +323,6 @@ function preflight(plan, ctx) {
 // ─── Execution ───────────────────────────────────────────────────────
 
 let liveChild = null;
-
-function resolveArm64Node() {
-  if (process.arch === "arm64") return process.execPath;
-  return existsSync(ARM64_NVM_NODE) ? ARM64_NVM_NODE : null;
-}
 
 // ─── Detached execution (--detach parent / PIPELINE_DETACHED=1 child) ─
 

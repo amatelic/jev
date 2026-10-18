@@ -1,0 +1,3 @@
+{
+  "$comment": "Alias → HuggingFace repo id for published fine-tunes. Maintained by scripts/publish-model.mjs; models:sync merges it with the local models/ scan (the published entry replaces the local one in listings/resolution)."
+}

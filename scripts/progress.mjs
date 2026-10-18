@@ -232,6 +232,14 @@ const USAGE = `usage: node scripts/progress.mjs start --name X [--base B] [--hyp
 
 function parseFlags(argv) {
   const opts = { _: [] };
+  const numeric = (flag, raw) => {
+    const v = Number(raw);
+    if (!Number.isFinite(v)) {
+      console.error(`error: ${flag} needs a finite number`);
+      process.exit(2);
+    }
+    return v;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const [flag, eqVal] = a.includes("=") ? a.split(/=(.*)/, 2) : [a, undefined];
@@ -249,10 +257,10 @@ function parseFlags(argv) {
     else if (flag === "--hyper") opts.hyper = value();
     else if (flag === "--data-notes") opts.dataNotes = value();
     else if (flag === "--note") opts.note = value();
-    else if (flag === "--gate") opts.gate = Number(value());
-    else if (flag === "--gate-ms") opts.gateMs = Number(value());
-    else if (flag === "--holdout") opts.holdout = Number(value());
-    else if (flag === "--holdout-ms") opts.holdoutMs = Number(value());
+    else if (flag === "--gate") opts.gate = numeric(flag, value());
+    else if (flag === "--gate-ms") opts.gateMs = numeric(flag, value());
+    else if (flag === "--holdout") opts.holdout = numeric(flag, value());
+    else if (flag === "--holdout-ms") opts.holdoutMs = numeric(flag, value());
     else if (flag === "--from-job") opts.fromJob = value();
     else if (flag === "--failed") opts.failed = true;
     else if (flag === "--help" || flag === "-h") {

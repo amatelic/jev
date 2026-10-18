@@ -14,13 +14,18 @@ import type { Question, Answer } from "./schemas.js";
 const PORT = Number.parseInt(process.env.JEV_PORT ?? process.argv.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "9401", 10);
 const MODEL = process.env.JEV_MODEL ?? process.argv.find((a) => a.startsWith("--model="))?.split("=")[1] ?? "kev-0.6b";
 const DTYPE = process.env.JEV_DTYPE ?? process.argv.find((a) => a.startsWith("--dtype="))?.split("=")[1] ?? "q4";
+const VALID_DTYPES = new Set(["q4", "q4f16", "fp16", "fp32", "auto"]);
+if (!VALID_DTYPES.has(DTYPE)) {
+  console.error(`error: invalid dtype "${DTYPE}" — valid: ${[...VALID_DTYPES].join(", ")}`);
+  process.exit(1);
+}
 
 async function main(): Promise<void> {
   const { OpenJev, choice, noul, score } = await import("open-jev");
 
   console.log(`Loading ${MODEL} (${DTYPE})...`);
-  // SAFETY: DTYPE is validated from CLI args; cast to the expected union.
-  const runtime = await OpenJev.load({ model: MODEL, device: "cpu", dtype: DTYPE as "q4" });
+  // DTYPE was validated against VALID_DTYPES above; narrow for open-jev's union.
+  const runtime = await OpenJev.load({ model: MODEL, device: "cpu", dtype: DTYPE as "q4" | "q4f16" | "fp16" | "fp32" | "auto" });
   console.log(`✅ ${MODEL} loaded`);
 
   const buildQuestion = (q: Question): unknown => {
@@ -35,12 +40,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    let body = "";
-    req.on("data", (chunk: Buffer) => { body += chunk; });
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => { chunks.push(chunk); });
     req.on("end", async () => {
       try {
         // Validate at the boundary
-        const parsed = JSON.parse(body) as unknown;
+        const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
         const errors = [...Value.Errors(DecideRequestSchema, parsed)];
 
         if (errors.length > 0) {

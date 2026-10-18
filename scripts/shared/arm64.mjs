@@ -28,7 +28,9 @@ function versionNumbers(name) {
  */
 export function resolveArm64Node() {
   if (process.arch === "arm64") return process.execPath;
-  const versionsDir = join(homedir(), ".nvm", "versions", "node");
+  // honor NVM_DIR like nvm itself does (doctor.mjs documents the same)
+  const nvmRoot = process.env.NVM_DIR ?? join(homedir(), ".nvm");
+  const versionsDir = join(nvmRoot, "versions", "node");
   let dirs;
   try {
     dirs = readdirSync(versionsDir);

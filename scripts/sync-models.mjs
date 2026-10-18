@@ -1,16 +1,22 @@
 /**
- * sync-models — regenerate src/models.generated.ts from the models/ directory.
+ * sync-models — regenerate src/models.generated.ts from:
+ *   1. models.remote.json  — published fine-tunes (alias → HuggingFace repo id)
+ *   2. the models/ directory — packaged local fine-tunes (models/<name>/onnx/)
  *
- * Every packaged fine-tune (models/<name>/onnx/) becomes a first-class model
- * alias: it lands in the TypeBox ModelAliasSchema union (autocomplete for
- * createJev({ model: "..." })), in listModels(), and in MODEL_SIZES —
- * the manual src/index.ts edits from docs/TRAINING.md §7, automated.
+ * Merge rule (one listing per model): a published entry REPLACES the local
+ * one — listModels()/resolution show the hosted model when it exists, the
+ * local payload otherwise.
  *
- * The generated file is COMMITTED (fresh clones keep typechecking even
- * without the gitignored models/ payloads; loading then errors with a
- * clear message at runtime).
+ * Every model alias joins the TypeBox ModelAliasSchema union (autocomplete
+ * for createJev({ model: "..." })), and carries a displayName read from the
+ * model's config.json ("display_name", else the family section's description
+ * first sentence, else the alias).
  *
- * Usage: npm run models:sync     (idempotent; run after packaging a model)
+ * The generated file is COMMITTED (fresh clones keep typechecking; loading a
+ * model whose payload is absent auto-downloads from HF for published models,
+ * or errors clearly for local-only ones).
+ *
+ * Usage: npm run models:sync     (idempotent; run after packaging/publishing)
  */
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -19,66 +25,169 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODELS_DIR = join(ROOT, "models");
+const MANIFEST = join(ROOT, "models.remote.json");
 const OUT = join(ROOT, "src", "models.generated.ts");
 
-function discover() {
+// ── helpers ─────────────────────────────────────────────────────────
+
+function displayNameOf(config, alias) {
+  if (typeof config?.display_name === "string" && config.display_name.trim()) {
+    return config.display_name.trim();
+  }
+  const section = config?.kev ?? config?.open_jev;
+  const desc = typeof section?.description === "string" ? section.description : "";
+  const first = desc.split(/(?<=[.!?])\s/)[0]?.trim();
+  return first || alias;
+}
+
+function readConfig(dir) {
+  try {
+    return JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function familyOf(config) {
+  if (typeof config?.kev === "object") return "kev";
+  if (typeof config?.open_jev === "object") return "open-jev";
+  return "unknown";
+}
+
+function onnxSize(dir) {
+  let n = 0;
+  const onnxDir = join(dir, "onnx");
+  try {
+    for (const f of readdirSync(onnxDir)) n += statSync(join(onnxDir, f)).size;
+  } catch { /* no onnx dir */ }
+  return n;
+}
+
+// ── discover ────────────────────────────────────────────────────────
+
+function discoverLocal() {
   if (!existsSync(MODELS_DIR)) return [];
   return readdirSync(MODELS_DIR)
     .filter((name) => existsSync(join(MODELS_DIR, name, "onnx")))
     .sort()
     .map((name) => {
       const dir = join(MODELS_DIR, name);
-      let family = "unknown";
-      try {
-        const config = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
-        if (typeof config.kev === "object") family = "kev";
-        else if (typeof config.open_jev === "object") family = "open-jev";
-      } catch { /* config missing/unreadable — family stays unknown */ }
-
-      let sizeBytes = 0;
-      const onnxDir = join(dir, "onnx");
-      for (const f of readdirSync(onnxDir)) sizeBytes += statSync(join(onnxDir, f)).size;
-
-      return { alias: name, path: `models/${name}`, family, sizeBytes };
+      const config = readConfig(dir);
+      return {
+        alias: name,
+        path: `models/${name}`,
+        family: familyOf(config),
+        sizeBytes: onnxSize(dir),
+        displayName: displayNameOf(config, name),
+      };
     });
 }
 
-function render(models) {
+function discoverRemote(locals) {
+  if (!existsSync(MANIFEST)) return [];
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
+  } catch (e) {
+    console.error(`error: models.remote.json is not valid JSON — ${e.message}`);
+    process.exit(1);
+  }
+  const byAlias = new Map(locals.map((l) => [l.alias, l]));
+  return Object.entries(manifest)
+    .filter(([k]) => k !== "$comment")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([alias, repo]) => {
+      const local = byAlias.get(alias);
+      return {
+        alias,
+        repo,
+        // family/displayName from the local payload when present; aliases otherwise
+        family: local?.family ?? "unknown",
+        displayName: local?.displayName ?? alias,
+      };
+    });
+}
+
+// ── render ──────────────────────────────────────────────────────────
+
+function render(local, remote) {
+  const remoteAliases = new Set(remote.map((r) => r.alias));
+  // published models replace their local listing
+  const localOnly = local.filter((l) => !remoteAliases.has(l.alias));
+
+  // Alias literal unions are emitted EXPLICITLY ("a" | "b", or `never` when
+  // empty). Typing the arrays as carrying those unions keeps Type.Literal()
+  // in schemas.ts literal-typed for real autocomplete — while empty arrays
+  // stay harmless (never unions away) instead of poisoning ModelAlias.
+  const aliasUnion = (names) => (names.length ? names.map((n) => JSON.stringify(n)).join(" | ") : "never");
+
   const lines = [
     "/**",
     " * Auto-generated by `npm run models:sync` — DO NOT EDIT.",
-    " * Source of truth: the models/ directory (packaged fine-tunes, gitignored).",
-    " * Committed so fresh clones typecheck; loading a model whose directory",
-    " * is absent fails at runtime with a clear error.",
+    " * Sources: models.remote.json (published → HuggingFace repo ids) and the",
+    " * models/ directory (packaged local payloads, gitignored).",
+    " * Committed so fresh clones typecheck; published models auto-download,",
+    " * local-only ones error clearly when their payload is absent.",
     " */",
     "",
-    "export const LOCAL_MODELS = [",
+    `export type LocalModelAlias = ${aliasUnion(localOnly.map((l) => l.alias))};`,
+    `export type RemoteModelAlias = ${aliasUnion(remote.map((r) => r.alias))};`,
+    "export type CustomModelAlias = LocalModelAlias | RemoteModelAlias;",
+    "",
+    "export interface LocalModel {",
+    "  alias: LocalModelAlias;",
+    "  path: string;",
+    "  family: string;",
+    "  sizeBytes: number;",
+    "  displayName: string;",
+    "}",
+    "",
+    "export interface RemoteModel {",
+    "  alias: RemoteModelAlias;",
+    "  repo: string;",
+    "  family: string;",
+    "  displayName: string;",
+    "}",
+    "",
+    "export const LOCAL_MODELS: readonly LocalModel[] = [",
   ];
-  for (const m of models) {
+  for (const m of localOnly) {
     lines.push(
       `  { alias: ${JSON.stringify(m.alias)}, path: ${JSON.stringify(m.path)}, ` +
-      `family: ${JSON.stringify(m.family)}, sizeBytes: ${m.sizeBytes} },`,
+      `family: ${JSON.stringify(m.family)}, sizeBytes: ${m.sizeBytes}, ` +
+      `displayName: ${JSON.stringify(m.displayName)} },`,
     );
   }
   lines.push(
-    "] as const;",
+    "];",
     "",
-    "export type LocalModel = (typeof LOCAL_MODELS)[number];",
-    "export type LocalModelAlias = LocalModel[\"alias\"];",
+    "export const REMOTE_MODELS: readonly RemoteModel[] = [",
+  );
+  for (const m of remote) {
+    lines.push(
+      `  { alias: ${JSON.stringify(m.alias)}, repo: ${JSON.stringify(m.repo)}, ` +
+      `family: ${JSON.stringify(m.family)}, displayName: ${JSON.stringify(m.displayName)} },`,
+    );
+  }
+  lines.push(
+    "];",
     "",
   );
   return lines.join("\n");
 }
 
 function main() {
-  const models = discover();
-  const content = render(models);
+  const locals = discoverLocal();
+  const remote = discoverRemote(locals);
+  const content = render(locals, remote);
   const changed = !existsSync(OUT) || readFileSync(OUT, "utf8") !== content;
   writeFileSync(OUT, content);
 
-  const names = models.map((m) => m.alias).join(", ") || "(none)";
-  console.log(`models.generated.ts: ${models.length} local model(s) — ${names}${changed ? "" : " (unchanged)"}`);
-  console.log(changed ? "→ type hints + listModels() updated; commit the generated file with your change" : "→ already in sync");
+  const fmt = (m) => `${m.alias}${m.displayName !== m.alias ? ` ("${m.displayName}")` : ""}`;
+  console.log(`models.generated.ts:`);
+  console.log(`  remote (published): ${remote.map((m) => `${fmt(m)} → ${m.repo}`).join(", ") || "(none)"}`);
+  console.log(`  local (packaged):   ${locals.filter((l) => !remote.some((r) => r.alias === l.alias)).map(fmt).join(", ") || "(none)"}`);
+  console.log(changed ? "→ registry updated; commit the generated file with your change" : "→ already in sync");
 }
 
 main();

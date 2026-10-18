@@ -4,22 +4,25 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
-import { LOCAL_MODELS } from "./models.generated.js";
+import { LOCAL_MODELS, REMOTE_MODELS } from "./models.generated.js";
 
 // ─── Questions ─────────────────────────────────────────────────────
 
-export const ChoiceQuestionSchema = Type.Object({
-  id: Type.String({ minLength: 1, maxLength: 64 }),
-  kind: Type.Literal("choice"),
-  prompt: Type.String({ minLength: 1, maxLength: 4000 }),
-  options: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
-    minItems: 2,
-    maxItems: 50,
-  }),
-  descriptions: Type.Optional(
-    Type.Record(Type.String(), Type.String({ maxLength: 500 })),
-  ),
-});
+export const ChoiceQuestionSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 64 }),
+    kind: Type.Literal("choice"),
+    prompt: Type.String({ minLength: 1, maxLength: 4000 }),
+    options: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
+      minItems: 2,
+      maxItems: 50,
+    }),
+    descriptions: Type.Optional(
+      Type.Record(Type.String(), Type.String({ maxLength: 500 })),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export const NoulQuestionSchema = Type.Object(
   {
@@ -30,15 +33,18 @@ export const NoulQuestionSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const ScoreQuestionSchema = Type.Object({
-  id: Type.String({ minLength: 1, maxLength: 64 }),
-  kind: Type.Literal("score"),
-  prompt: Type.String({ minLength: 1, maxLength: 4000 }),
-  levels: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
-    minItems: 2,
-    maxItems: 10,
-  }),
-});
+export const ScoreQuestionSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 64 }),
+    kind: Type.Literal("score"),
+    prompt: Type.String({ minLength: 1, maxLength: 4000 }),
+    levels: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+      minItems: 2,
+      maxItems: 10,
+    }),
+  },
+  { additionalProperties: false },
+);
 
 export const QuestionSchema = Type.Union([
   ChoiceQuestionSchema,
@@ -99,10 +105,13 @@ export type AbstainAnswer = Static<typeof AbstainAnswerSchema>;
 
 // ─── Request / Response ────────────────────────────────────────────
 
-export const DecideRequestSchema = Type.Object({
-  state: Type.String({ minLength: 1, maxLength: 8000 }),
-  questions: Type.Array(QuestionSchema, { minItems: 1, maxItems: 32 }),
-});
+export const DecideRequestSchema = Type.Object(
+  {
+    state: Type.String({ minLength: 1, maxLength: 8000 }),
+    questions: Type.Array(QuestionSchema, { minItems: 1, maxItems: 32 }),
+  },
+  { additionalProperties: false },
+);
 
 export const DecideResponseSchema = Type.Object({
   ok: Type.Boolean(),
@@ -116,19 +125,22 @@ export type DecideResponse = Static<typeof DecideResponseSchema>;
 
 // ─── Model management ──────────────────────────────────────────────
 
-// Hub aliases + every packaged fine-tune discovered in models/ by
-// `npm run models:sync` (src/models.generated.ts). Adding a local model
-// and re-running the sync extends this union — full autocomplete for
-// createJev({ model: ... }) with zero manual schema edits.
+// Hub aliases + every packaged local fine-tune (models/) and published one
+// (models.remote.json → HuggingFace) discovered by `npm run models:sync`
+// (src/models.generated.ts). Adding a model and re-running the sync extends
+// this union — full autocomplete for createJev({ model: ... }) with zero
+// manual schema edits.
 export const ModelAliasSchema = Type.Union([
   Type.Literal("kev-0.6b"),
   Type.Literal("kev-4b"),
   Type.Literal("open-jev"),
   ...LOCAL_MODELS.map((m) => Type.Literal(m.alias)),
+  ...REMOTE_MODELS.map((m) => Type.Literal(m.alias)),
 ]);
 
 export const ModelInfoSchema = Type.Object({
   alias: Type.String(),
+  displayName: Type.String(),
   repo: Type.String(),
   family: Type.String(),
   cached: Type.Boolean(),

@@ -29,7 +29,7 @@ import {
   type JevClient,
   type ModelInfo,
 } from "./index.js";
-import { LOCAL_MODELS } from "./models.generated.js";
+import { LOCAL_MODELS, REMOTE_MODELS } from "./models.generated.js";
 
 // ─── Schema validation tests (no model needed) ─────────────────────
 
@@ -260,8 +260,17 @@ describe("model management", () => {
   });
 
   it("generated local model aliases pass ModelAliasSchema (autocomplete is real)", () => {
-    for (const m of LOCAL_MODELS) {
+    for (const m of [...LOCAL_MODELS, ...REMOTE_MODELS]) {
       expect(Value.Check(ModelAliasSchema, m.alias)).toBe(true);
+    }
+  });
+
+  it("every listing carries a non-empty displayName", async () => {
+    const models = await listModels();
+
+    for (const m of models) {
+      expect(typeof m.displayName).toBe("string");
+      expect(m.displayName.length).toBeGreaterThan(0);
     }
   });
 

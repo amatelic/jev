@@ -5,16 +5,14 @@
  *   1. Accuracy across a 50-event labeled dataset
  *   2. Per-category precision/recall/F1
  *   3. Confidence calibration (does 80% confidence mean 80% correct?)
- *   4. Question phrasing sensitivity
- *   5. Ensemble voting (2-of-3 agreement)
+ *   4. Ensemble voting (2-of-3 agreement)
  *
  * Usage:
  *   node eval.mjs                    # all models
  *   node eval.mjs kev-0.6b          # single model
- *   node eval.mjs --calibration     # calibration analysis only
  */
 
-import { OpenJev, choice, noul, score } from "open-jev";
+import { OpenJev, choice } from "open-jev";
 
 // ─── Labeled dataset (50 events, 7 categories) ─────────────────────
 
@@ -101,16 +99,6 @@ const CATEGORY_QUESTION = choice(
     wellness: "Yoga, meditation, wellness, health, fitness",
   },
 );
-
-const SUBTYPE_QUESTIONS = {
-  concert: ["rock", "pop", "jazz", "electronic", "classical", "hip-hop", "folk", "metal", "indie", "other-music"],
-  sports: ["hockey", "football", "basketball", "tennis", "running", "mma", "motorsport", "other-sports"],
-  exhibition: ["contemporary-art", "photography", "design", "history", "science", "sculpture", "painting", "digital-art", "interactive"],
-  networking: ["business-networking", "language-exchange", "founder-meetup", "tech-meetup", "book-club", "board-games", "open-mic"],
-  dining: ["food-festival", "cooking-demo", "brunch", "dinner", "cocktail-event"],
-  outdoor: ["hiking", "walking-tour", "cycling-tour", "picnic", "adventure"],
-  wellness: ["yoga", "meditation", "pilates", "breathwork", "sound-healing"],
-};
 
 async function evalModel(rt, modelName) {
   console.log(`\n${"═".repeat(60)}`);
@@ -224,7 +212,7 @@ async function evalModel(rt, modelName) {
 // ─── Main ──────────────────────────────────────────────────────────
 
 async function main() {
-  const models = process.argv[2] && process.argv[2] !== "--calibration"
+  const models = process.argv[2]
     ? [process.argv[2]]
     : ["kev-0.6b", "kev-4b", "open-jev"];
 

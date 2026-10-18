@@ -18,10 +18,30 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { CATEGORIES, CATEGORY_DESCRIPTIONS } from "./shared/question.mjs";
 import { reexecIfWrongArch } from "./shared/arm64.mjs";
 
-const MODEL = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "kev-0.6b";
-const GATE = process.argv.includes("--gate");
-const SPLIT = process.argv[2] === "--gate" || process.argv[2]?.startsWith("--") ? undefined
-  : (process.argv[3]?.startsWith("--") ? undefined : process.argv[3]);
+// Positionals + flags — order-independent: `--gate kev-4b` and `kev-4b --gate`
+// both work; unknown flags/positionals error instead of being silently ignored.
+const argv = process.argv.slice(2);
+const flags = new Set(["--gate", "--list"]);
+const positionals = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a.startsWith("--")) {
+    if (!flags.has(a)) {
+      console.error(`error: unknown flag "${a}" — valid: ${[...flags].join(" ")} <model> [split]`);
+      process.exit(2);
+    }
+    flags.add(a);
+  } else {
+    positionals.push(a);
+  }
+}
+const MODEL = positionals[0] ?? "kev-0.6b";
+const SPLIT = positionals[1];
+const GATE = flags.has("--gate");
+if (positionals.length > 2) {
+  console.error(`error: unexpected extra argument(s): ${positionals.slice(2).join(" ")}`);
+  process.exit(2);
+}
 
 // ─── Load records ───────────────────────────────────────────────────
 

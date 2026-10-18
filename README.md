@@ -52,20 +52,16 @@ const jev = await createJev({
 ## Model management
 
 ```typescript
-// List all models with cache status
+// List all models with cache status and display names
 const models = await listModels();
 // → [
-//   { alias: "kev-0.6b", sizeBytes: 383111829, cached: true,  family: "kev" },
-//   { alias: "kev-4b",   sizeBytes: 2528556269, cached: false, family: "kev" },
-//   { alias: "open-jev", sizeBytes: 838860800,  cached: false, family: "open-jev" }
-// ]
+//   { alias: "kev-0.6b",  displayName: "Kev 0.6B — fast default",           repo: "onnx-community/kev-0.6b-ONNX", family: "kev",      cached: true,  downloadSizeBytes: 383111829 },
+//   { alias: "kev-4b",    displayName: "Kev 4B — accuracy ceiling",         repo: "onnx-community/kev-4b-ONNX",   family: "kev",      cached: false, downloadSizeBytes: 2528556269 },
+//   { alias: "open-jev",  displayName: "Open-Jev (DeBERTa-v3) — lightest",  repo: "onnx-community/open-jev-deberta-v3-large-ONNX", family: "open-jev", cached: false, downloadSizeBytes: 838860800 }
+// ] — plus any fine-tuned models registered by `npm run models:sync`
 
-// Pre-download without using
+// Pre-download without using (metadata-only cache check is listModels() above)
 await download("kev-4b", { onProgress: (p) => ... });
-
-// Check cache without downloading
-const info = await modelInfo("kev-4b");
-// → { isCached: false, downloadSize: 2528556269, files: [...] }
 ```
 
 ## Question types (TypeBox validated)

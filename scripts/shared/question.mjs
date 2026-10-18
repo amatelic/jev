@@ -1,6 +1,6 @@
 /**
  * Shared question definitions — the single source of truth for the
- * category question used in eval.mjs, bench.mjs, and training data.
+ * category question used in eval.mjs (via scripts/eval-dataset.mjs), the data generator, and training data — eval.mjs keeps a deliberately frozen inline copy so the gate cannot drift; both must stay token-identical.
  *
  * CRITICAL (docs/TRAINING.md §4): training and inference prompts must
  * match token-for-token, descriptions included. Never edit these strings

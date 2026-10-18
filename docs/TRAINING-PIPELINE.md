@@ -200,7 +200,8 @@ defaults to offline mode for local model paths — no PATH export needed.
 | `scripts/eval-dataset.mjs` | dataset-driven eval (holdout/gate, any model id/path) |
 | `scripts/doctor.mjs` | one-command environment doctor + guided bootstrap (`--fix`) |
 | `scripts/progress.mjs` | auto-maintained `PROGRESS.md` model log (`start`/`finish`/`list`) with deltas vs the previous result |
-| `scripts/sync-models.mjs` | regenerates `src/models.generated.ts` from `models/` — TypeBox alias union + listModels entries for local fine-tunes |
+| `scripts/sync-models.mjs` | regenerates `src/models.generated.ts` from `models/` + `models.remote.json` — TypeBox alias union, displayNames, listModels entries |
+| `scripts/publish-model.mjs` | uploads a packaged model to HuggingFace and registers it in `models.remote.json` (`--dry-run` previews) |
 | `scripts/sandbox.mjs` | `npm run sandbox` runner — copies the template to a gitignored `sandbox/`, `--reset` restores it |
 
 ## One-shot recap (copy-paste)
@@ -259,10 +260,12 @@ HF_HUB_OFFLINE=1 node scripts/eval-dataset.mjs "$(pwd)/models/events-v1" --gate
 - Edits in `sandbox/` are invisible to git — scratch experiments never appear in `git status` or risk being committed; the committed template stays pristine.
 - `npm run sandbox:reset` deletes the copy and restores the template default. Extra args are forwarded: `npm run sandbox -- --flag`.
 
-### npm run models:sync — first-class aliases for local fine-tunes
+### npm run models:sync — first-class aliases for custom fine-tunes
 
-- `npm run models:sync` regenerates `src/models.generated.ts` from the `models/` directory: every packaged fine-tune (`models/<name>/onnx/`) joins the `ModelAliasSchema` TypeBox union — real editor autocomplete and compile-time rejection of typos in `createJev({ model: ... })` — plus `listModels()` (family + payload size from the model's own `config.json`) and runtime resolution to an absolute local path.
-- Run it after `npm run pipeline` packages a new model, and commit the generated file (fresh clones keep typechecking; a registered-but-missing payload warns clearly at load). This automates the manual `src/index.ts` extension from TRAINING.md §7.
+- `npm run models:sync` regenerates `src/models.generated.ts` from **two sources**: `models.remote.json` (published models, alias → HuggingFace repo id, maintained by `publish-model.mjs`) and the `models/` directory (local payloads). Every custom model joins the `ModelAliasSchema` TypeBox union — real editor autocomplete and compile-time rejection of typos in `createJev({ model: ... })` — plus `listModels()` entries (family, payload size, and a **displayName** read from the model's `config.json` `display_name`, else its family-section description's first sentence).
+- **Merge rule**: a published entry replaces its local one — listings and resolution prefer the hosted model; local payloads win on the machine that trained them (no re-download). Resolution order: local dir → HF repo → hub alias.
+- `node scripts/publish-model.mjs <name> --dry-run` previews the HF upload (config + tokenizer + q4 ONNX, ~900 MB); without `--dry-run` it uploads via vendor/kev's `huggingface_hub` (needs `HF_TOKEN`), registers the alias in `models.remote.json`, and re-runs the sync. Consumers then get `createJev({ model: "<name>" })` with auto-download, exactly like the shipped kev-* models.
+- Run the sync after `npm run pipeline` packages a new model or after publishing, and commit `models.remote.json` + the generated file (fresh clones keep typechecking; a registered-but-missing local payload warns clearly at load, published payloads auto-download).
 
 ### scripts/doctor.mjs — environment doctor
 
