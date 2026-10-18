@@ -16,6 +16,7 @@
  */
 
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { categoryQuestion, stateFor, CATEGORY_DESCRIPTIONS } from "./shared/question.mjs";
 
 // ─── CLI ────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const rand = mulberry32(SEED);
+// (RNG state lives near generate() at the bottom — re-seedable for mining pools)
 const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 const chance = (p) => rand() < p;
 
@@ -485,12 +486,7 @@ function makeRecord(cat, split, id) {
   };
 }
 
-function main() {
-  if (TOTAL < 50) {
-    console.error("Need at least 50 records for stratified splits");
-    process.exit(1);
-  }
-
+function loadGateStates() {
   // ── Gate protection (docs/TRAINING.md §4/§8) ──────────────────────
   // The official 50-event eval set is the gate. No generated record may
   // match it exactly — neither train (leakage) nor holdout (it would
@@ -500,9 +496,17 @@ function main() {
   if (evalTexts.length !== 50) {
     console.warn(`warn: extracted ${evalTexts.length} eval texts (expected 50) — check eval.mjs format`);
   }
-  const gateStates = new Set(evalTexts.map((t) => stateFor(t)));
+  return new Set(evalTexts.map((t) => stateFor(t)));
+}
 
-  const scale = TOTAL / 50;
+/** Deterministic dataset generation — exported for the disagreement miner.
+ * Returns { train, holdout, stats }. Never writes files. */
+export function generate({ seed = 42, total = 1250, holdoutFraction = HOLDOUT_FRACTION } = {}) {
+  if (total < 50) throw new Error("Need at least 50 records for stratified splits");
+  seedState(seed); // re-seed the module RNG for reproducible pools
+
+  const gateStates = loadGateStates();
+  const scale = total / 50;
   const perCat = Object.fromEntries(
     Object.entries(DISTRIBUTION).map(([cat, n]) => [cat, Math.max(5, Math.round(n * scale))]),
   );
@@ -513,7 +517,7 @@ function main() {
   let id = 0;
 
   for (const [cat, n] of Object.entries(perCat)) {
-    const nHold = Math.max(5, Math.round(n * HOLDOUT_FRACTION));
+    const nHold = Math.max(5, Math.round(n * holdoutFraction));
     const nTrain = n - nHold;
 
     for (const [split, count] of [["train", nTrain], ["holdout", nHold]]) {
@@ -532,30 +536,50 @@ function main() {
     }
   }
 
-  mkdirSync("data", { recursive: true });
-  for (const split of ["train", "holdout"]) {
-    const path = `data/${split}.jsonl`;
-    writeFileSync(path, records[split].map((r) => JSON.stringify(r)).join("\n") + "\n");
-  }
-
-  // Report
-  console.log(`seed=${SEED} planned=${totalPlanned}`);
-  for (const split of ["train", "holdout"]) {
-    const n = records[split].length;
-    const cs = records[split].filter((r) => r.meta.lang === "cs").length;
-    console.log(`  ${split}: ${n} records (${cs} Czech), ${new Set(records[split].map((r) => r.meta.cat)).size} categories`);
-    const byCat = {};
-    for (const r of records[split]) byCat[r.meta.cat] = (byCat[r.meta.cat] ?? 0) + 1;
-    console.log(`    ${Object.entries(byCat).map(([c, n]) => `${c}:${n}`).join(" ")}`);
-  }
-
-  // Sanity: no overlap of raw state texts across splits
   const trainStates = new Set(records.train.map((r) => r.state));
-  const overlap = records.holdout.filter((r) => trainStates.has(r.state)).length;
-  const gateLeaks = [...records.train, ...records.holdout].filter((r) => gateStates.has(r.state)).length;
-  console.log(`  leakage check: ${overlap} holdout states also in train (must be 0)`);
-  console.log(`  gate check: ${gateLeaks} records matching the official 50-event eval set (must be 0)`);
-  if (overlap > 0 || gateLeaks > 0) process.exit(1);
+  const stats = {
+    seed, totalPlanned,
+    overlap: records.holdout.filter((r) => trainStates.has(r.state)).length,
+    gateLeaks: [...records.train, ...records.holdout].filter((r) => gateStates.has(r.state)).length,
+  };
+  return { train: records.train, holdout: records.holdout, stats };
 }
 
-main();
+// Re-seedable RNG state (mulberry32 wrapped so generate() is reproducible)
+let rand = mulberry32(42);
+function seedState(s) { rand = mulberry32(s); }
+
+function main() {
+  const outPrefixIdx = process.argv.indexOf("--out-prefix");
+  const outPrefix = outPrefixIdx !== -1 ? process.argv[outPrefixIdx + 1] : "";
+
+  const { train, holdout, stats } = generate({ seed: SEED, total: TOTAL });
+
+  mkdirSync("data", { recursive: true });
+  const prefix = outPrefix ? `${outPrefix}-` : "";
+  for (const split of ["train", "holdout"]) {
+    const path = `data/${prefix}${split}.jsonl`;
+    writeFileSync(path, (split === "train" ? train : holdout).map((r) => JSON.stringify(r)).join("\n") + "\n");
+  }
+
+  // Report + sanity (values computed inside generate())
+  console.log(`seed=${SEED} planned=${stats.totalPlanned}`);
+  for (const split of ["train", "holdout"]) {
+    const list = split === "train" ? train : holdout;
+    const n = list.length;
+    const cs = list.filter((r) => r.meta.lang === "cs").length;
+    console.log(`  ${split}: ${n} records (${cs} Czech), ${new Set(list.map((r) => r.meta.cat)).size} categories`);
+    const byCat = {};
+    for (const r of list) byCat[r.meta.cat] = (byCat[r.meta.cat] ?? 0) + 1;
+    console.log(`    ${Object.entries(byCat).map(([c, n]) => `${c}:${n}`).join(" ")}`);
+  }
+  console.log(`  leakage check: ${stats.overlap} holdout states also in train (must be 0)`);
+  console.log(`  gate check: ${stats.gateLeaks} records matching the official 50-event eval set (must be 0)`);
+  if (outPrefix) console.log(`  pool prefix: data/${outPrefix}-*.jsonl`);
+  if (stats.overlap > 0 || stats.gateLeaks > 0) process.exit(1);
+}
+
+// Run as CLI only (importable as a module for the disagreement miner)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

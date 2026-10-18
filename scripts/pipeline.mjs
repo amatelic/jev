@@ -102,7 +102,7 @@ const STAGES = [
         cwd: ctx.vendor,
         args: [
           "run", "python", "-m", "kev.train",
-          "--data", "../../data/kev-train.jsonl",
+          "--data", ctx.trainData,
           "--init_from", "jaredpalmer/kev-0.6b",
           "--lr", "2e-5", "--epochs", "3", "--batch", "8", "--accum", "1",
           "--device", "mps",
@@ -164,7 +164,7 @@ const USAGE = `usage: node scripts/pipeline.mjs [--name <model>] [--only a,b,c] 
 stages: ${STAGE_NAMES.join(", ")}   (fetch is optional and default-off)`;
 
 function parseArgs(argv) {
-  const opts = { name: "events-v1", only: null, skip: [], from: null, dryRun: false, yes: false, detach: false };
+  const opts = { name: "events-v1", only: null, skip: [], from: null, dryRun: false, yes: false, detach: false, data: null };
   const value = (flag, v) => {
     if (v === undefined || v === "") {
       console.error(`error: ${flag} requires a value\n${USAGE}`);
@@ -186,6 +186,7 @@ function parseArgs(argv) {
       return value(flag, argv[++i]);
     };
     if (flag === "--name") opts.name = next();
+    else if (flag === "--data") opts.data = next();
     else if (flag === "--only") opts.only = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--skip") opts.skip = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--from") opts.from = next();
@@ -544,6 +545,7 @@ async function main() {
     nodeBin,
   };
   ctx.runDir = join(ctx.vendor, "runs", ctx.name);
+  ctx.trainData = opts.data ? join(ctx.root, opts.data) : join(ctx.root, "data", "kev-train.jsonl");
   ctx.modelDir = join(ctx.root, "models", ctx.name);
 
   const plan = buildPlan(opts);
